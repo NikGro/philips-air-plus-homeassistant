@@ -98,20 +98,18 @@ class PhilipsAirplusFan(CoordinatorEntity, FanEntity):
 
     @property
     def is_on(self) -> bool:
-        """Return True if the fan is on.
-
-        D0310D is the power flag: 0 = off, any non-zero value = on.
-        Observed values: 0 (off), 2 (on). Using != 0 to be robust
-        against further undocumented values.
-        """
+        """Read the power register selected by the backend/model mapping."""
         power = self._get_device_property(PROP_POWER_FLAG)
         if power is None:
             return False
-        return int(power) != 0
+        try:
+            return int(power) != 0
+        except (TypeError, ValueError):
+            return False
 
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        _LOGGER.debug("Coordinator update: %s", self.coordinator.data)
+        _LOGGER.debug("Coordinator state updated")
         self.async_write_ha_state()
 
     @property

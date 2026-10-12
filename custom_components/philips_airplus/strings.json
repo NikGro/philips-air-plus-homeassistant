@@ -3,7 +3,7 @@
     "step": {
       "auth_method": {
         "title": "Authentication Method",
-        "description": "Choose how you want to authenticate with your Philips account.\n\n**Email + verification code (recommended)** — uses the same cloud account as the Philips app and Google Home. Enter your email, receive a code by email, enter it. No browser or DevTools needed. Works with both **Philips Air+** and **Philips HomeID** accounts.\n\n**OAuth PKCE (advanced)** — only needed as a fallback. Requires opening a browser and using the DevTools Network tab to capture a redirect URL. Only works for accounts registered via the **Philips Air+ app**.",
+        "description": "For PureProtect 3200i (AC3220/AC3221), choose **Air+ cloud: email + verification code**. This uses the Air+ app device registry. DaConnect and OAuth remain available for older devices.",
         "data": {
           "auth_method": "Authentication Method"
         }
@@ -78,7 +78,12 @@
     "abort": {
       "already_configured": "This device is already configured.",
       "auth_failed": "Authentication failed.",
-      "reauth_successful": "Re-authentication successful."
+      "reauth_successful": "Re-authentication successful.",
+      "wrong_account": "Sign in with the original Philips account.",
+      "no_devices": "No devices are linked to this Air+ account.",
+      "unsupported_model": "This model is not yet supported by the new Air+ cloud backend.",
+      "device_not_found": "The configured device is no longer linked to this account.",
+      "invalid_device": "Invalid device selection."
     }
   },
   "options": {
@@ -93,6 +98,13 @@
         "data_description": {
           "enable_mqtt": "Disable to stop cloud/MQTT activity for this integration",
           "auth_code": "Paste a fresh OAuth code to re-authenticate without removing the integration"
+        }
+      },
+      "cloud_options": {
+        "title": "Philips Air+ Options",
+        "description": "Enable or pause the cloud connection. Access tokens are renewed automatically.",
+        "data": {
+          "enable_mqtt": "Enable cloud connection"
         }
       }
     }

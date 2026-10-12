@@ -3,7 +3,7 @@
     "step": {
       "auth_method": {
         "title": "Méthode d'authentification",
-        "description": "Choisissez comment vous souhaitez vous authentifier avec votre compte Philips.\n\n**OAuth PKCE** — nécessite d'ouvrir un navigateur et d'utiliser l'onglet Réseau des DevTools pour capturer l'URL de redirection. Fonctionne uniquement avec l'app **Philips Air+**.\n\n**Email + code de vérification** — plus simple : entrez votre email, recevez un code, saisissez-le. Fonctionne avec **Philips Air+** et **Philips HomeID**.",
+        "description": "For PureProtect 3200i (AC3220/AC3221), choose **Air+ cloud: email + verification code**. This uses the Air+ app device registry. DaConnect and OAuth remain available for older devices.",
         "data": {
           "auth_method": "Méthode d'authentification"
         }
@@ -65,7 +65,12 @@
     "abort": {
       "already_configured": "Cet appareil est déjà configuré.",
       "auth_failed": "Échec de l'authentification.",
-      "reauth_successful": "Ré-authentification réussie."
+      "reauth_successful": "Ré-authentification réussie.",
+      "wrong_account": "Sign in with the original Philips account.",
+      "no_devices": "No devices are linked to this Air+ account.",
+      "unsupported_model": "This model is not yet supported by the new Air+ cloud backend.",
+      "device_not_found": "The configured device is no longer linked to this account.",
+      "invalid_device": "Invalid device selection."
     }
   },
   "options": {
@@ -80,6 +85,13 @@
         "data_description": {
           "enable_mqtt": "Désactiver pour arrêter l'activité cloud/MQTT de cette intégration",
           "auth_code": "Collez un nouveau code OAuth pour se ré-authentifier sans supprimer l'intégration"
+        }
+      },
+      "cloud_options": {
+        "title": "Philips Air+ Options",
+        "description": "Enable or pause the cloud connection. Access tokens are renewed automatically.",
+        "data": {
+          "enable_mqtt": "Enable cloud connection"
         }
       }
     }

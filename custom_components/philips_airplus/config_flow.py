@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import secrets
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
@@ -12,12 +13,19 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_ACCESS_TOKEN
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .auth import PhilipsAirplusAuth, PhilipsAirplusOAuth2Implementation
 from .api import PhilipsAirplusAPIClient, PhilipsAirplusDevice
 from .email_auth import EmailOTPAuth, EmailOTPAuthError
+from .airmatters import AirCloudClient, AirCloudError, AirCloudAuthError, AirCloudOTP, load_signing_key
+from .airmatters_model import model_config as cloud_model_config
 from .const import (
     AUTH_MODE_OAUTH,
+    AUTH_MODE_AIRPLUS_CLOUD,
+    CONF_SIGNING_KEY,
+    CONF_DEVICE_MODEL,
+    CONF_DEVICE_TYPE,
     AUTH_MODE_EMAIL_OTP,
     CONF_AUTH_MODE,
     CONF_CLIENT_ID,
@@ -55,6 +63,8 @@ class PhilipsAirplusConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._reauth_entry: Optional[config_entries.ConfigEntry] = None
         self._email: Optional[str] = None
         self._vtoken: Optional[str] = None
+        self._cloud_uid: str | None = None
+        self._cloud_key: str | None = None
 
     async def async_step_user(
         self, user_input: Optional[Dict[str, Any]] = None
@@ -71,6 +81,9 @@ class PhilipsAirplusConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             original_mode = self._reauth_entry.data.get(
                 CONF_AUTH_MODE, AUTH_MODE_OAUTH
             )
+            if original_mode == AUTH_MODE_AIRPLUS_CLOUD:
+                self._auth_mode = AUTH_MODE_AIRPLUS_CLOUD
+                return await self.async_step_email()
             if original_mode == AUTH_MODE_EMAIL_OTP:
                 self._auth_mode = AUTH_MODE_EMAIL_OTP
                 self._client_id = DEFAULT_CLIENT_ID
@@ -80,7 +93,10 @@ class PhilipsAirplusConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return await self.async_step_oauth()
 
         if user_input is not None:
-            method = user_input.get("auth_method", AUTH_MODE_EMAIL_OTP)
+            method = user_input.get("auth_method", AUTH_MODE_AIRPLUS_CLOUD)
+            if method == AUTH_MODE_AIRPLUS_CLOUD:
+                self._auth_mode = AUTH_MODE_AIRPLUS_CLOUD
+                return await self.async_step_email()
             if method == AUTH_MODE_OAUTH:
                 self._auth_mode = AUTH_MODE_OAUTH
                 self._client_id = DEFAULT_CLIENT_ID
@@ -94,10 +110,11 @@ class PhilipsAirplusConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema(
                 {
                     vol.Required(
-                        "auth_method", default=AUTH_MODE_EMAIL_OTP
+                        "auth_method", default=AUTH_MODE_AIRPLUS_CLOUD
                     ): vol.In(
                         {
-                            AUTH_MODE_EMAIL_OTP: "Email + verification code (recommended, cloud)",
+                            AUTH_MODE_AIRPLUS_CLOUD: "Air+ cloud: email + verification code (recommended)",
+                            AUTH_MODE_EMAIL_OTP: "DaConnect: email + verification code (older devices)",
                             AUTH_MODE_OAUTH: "OAuth PKCE (advanced, browser DevTools)",
                         }
                     ),
@@ -116,13 +133,20 @@ class PhilipsAirplusConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_email"
             else:
                 self._email = email
+                self._cloud_uid = None
                 try:
-                    email_auth = EmailOTPAuth(self.hass)
-                    self._vtoken = await email_auth.request_otp(email)
-                    await email_auth.close()
+                    if self._auth_mode == AUTH_MODE_AIRPLUS_CLOUD:
+                        session = async_get_clientsession(self.hass)
+                        self._cloud_key = await load_signing_key(session)
+                        self._vtoken = await AirCloudOTP(session).send(email)
+                    else:
+                        email_auth = EmailOTPAuth(self.hass)
+                        try:
+                            self._vtoken = await email_auth.request_otp(email)
+                        finally:
+                            await email_auth.close()
                     return await self.async_step_email_otp()
-                except EmailOTPAuthError as ex:
-                    _LOGGER.error("OTP send failed: %s", ex)
+                except (EmailOTPAuthError, AirCloudError):
                     errors["base"] = "otp_send_failed"
 
         return self.async_show_form(
@@ -140,6 +164,8 @@ class PhilipsAirplusConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
         """Enter OTP code and complete authentication."""
+        if self._auth_mode == AUTH_MODE_AIRPLUS_CLOUD:
+            return await self._async_cloud_otp(user_input)
         errors: Dict[str, str] = {}
         if user_input is not None:
             code = (user_input.get("otp_code") or "").strip()
@@ -237,6 +263,61 @@ class PhilipsAirplusConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             description_placeholders={"email": self._email or ""},
             errors=errors,
         )
+
+    async def _async_cloud_otp(self, user_input):
+        errors = {}
+        if user_input is not None:
+            code = (user_input.get("otp_code") or "").strip()
+            if not re.fullmatch(r"[0-9]{6}", code):
+                errors["base"] = "otp_verify_failed"
+            else:
+                try:
+                    session = async_get_clientsession(self.hass)
+                    uid = self._cloud_uid
+                    if uid is None:
+                        uid = await AirCloudOTP(session).verify(self._email or "", code, self._vtoken or "")
+                        self._cloud_uid = uid
+                    if self._reauth_entry and uid != self._reauth_entry.data.get(CONF_USER_ID):
+                        return self.async_abort(reason="wrong_account")
+                    client = AirCloudClient(session, uid, self._cloud_key or "")
+                    records = await client.devices()
+                    self._cloud_uid = uid
+                    self._devices = []
+                    for record in records:
+                        info = record["device_info"]
+                        if cloud_model_config(info.get("modelid", ""), info.get("type", "")):
+                            self._devices.append(PhilipsAirplusDevice({
+                                "uuid": record["device_id"], "name": info.get("name") or "Philips purifier",
+                                "type": info["type"], "model": info["modelid"]}))
+                    if not self._devices:
+                        return self.async_abort(reason="no_devices" if not records else "unsupported_model")
+                    if self._reauth_entry:
+                        target = self._reauth_entry.data.get(CONF_DEVICE_UUID)
+                        index = next((index for index, device in enumerate(self._devices) if device.uuid == target), None)
+                        if index is None:
+                            return self.async_abort(reason="device_not_found")
+                        return await self.async_step_select_device({"device": str(index)})
+                    return await self.async_step_select_device()
+                except AirCloudAuthError:
+                    errors["base"] = "auth_failed" if self._cloud_uid else "otp_verify_failed"
+                except AirCloudError:
+                    errors["base"] = "cannot_connect"
+        return self.async_show_form(step_id="email_otp",
+            data_schema=vol.Schema({vol.Required("otp_code"): str}), errors=errors,
+            description_placeholders={"email": self._email or ""})
+
+    async def _async_finish_cloud(self, device):
+        await self.async_set_unique_id(f"{AUTH_MODE_AIRPLUS_CLOUD}:{device.uuid}")
+        data = {CONF_AUTH_MODE: AUTH_MODE_AIRPLUS_CLOUD, CONF_DEVICE_ID: device.uuid,
+                CONF_DEVICE_UUID: device.uuid, CONF_DEVICE_NAME: device.name,
+                CONF_USER_ID: self._cloud_uid, CONF_SIGNING_KEY: self._cloud_key,
+                CONF_DEVICE_MODEL: device.data["model"], CONF_DEVICE_TYPE: device.type}
+        if self._reauth_entry:
+            self.hass.config_entries.async_update_entry(self._reauth_entry, data=data)
+            await self.hass.config_entries.async_reload(self._reauth_entry.entry_id)
+            return self.async_abort(reason="reauth_successful")
+        self._abort_if_unique_id_configured()
+        return self.async_create_entry(title=device.name, data=data)
 
     async def async_step_oauth(
         self, user_input: Optional[Dict[str, Any]] = None
@@ -366,7 +447,11 @@ class PhilipsAirplusConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.error("Invalid device index received: %s", device_index)
                 return self.async_abort(reason="invalid_device")
 
+            if not 0 <= device_index_int < len(self._devices):
+                return self.async_abort(reason="invalid_device")
             selected_device = self._devices[device_index_int]
+            if self._auth_mode == AUTH_MODE_AIRPLUS_CLOUD:
+                return await self._async_finish_cloud(selected_device)
 
             self._auth = PhilipsAirplusAuth(
                 self.hass,
@@ -501,6 +586,8 @@ class PhilipsAirplusOptionsFlowHandler(config_entries.OptionsFlow):
 
     def _build_init_schema(self, enable_mqtt: bool, auth_code: str = "") -> vol.Schema:
         """Build options form schema."""
+        if self._auth_mode == AUTH_MODE_AIRPLUS_CLOUD:
+            return vol.Schema({vol.Optional(CONF_ENABLE_MQTT, default=enable_mqtt): bool})
         if self._auth_mode == AUTH_MODE_EMAIL_OTP:
             return vol.Schema(
                 {
@@ -522,6 +609,9 @@ class PhilipsAirplusOptionsFlowHandler(config_entries.OptionsFlow):
         errors: Optional[Dict[str, str]] = None,
     ) -> FlowResult:
         """Render options form with current placeholders."""
+        if self._auth_mode == AUTH_MODE_AIRPLUS_CLOUD:
+            return self.async_show_form(step_id="cloud_options",
+                data_schema=self._build_init_schema(enable_mqtt), errors=errors or {})
         if self._auth_mode == AUTH_MODE_EMAIL_OTP:
             device_name = self._entry.data.get(CONF_DEVICE_NAME, "Unknown")
             return self.async_show_form(
@@ -562,6 +652,8 @@ class PhilipsAirplusOptionsFlowHandler(config_entries.OptionsFlow):
             return await self._async_show_init_form(enable_mqtt)
 
         enable_mqtt = user_input.get(CONF_ENABLE_MQTT, enable_mqtt)
+        if self._auth_mode == AUTH_MODE_AIRPLUS_CLOUD:
+            return self.async_create_entry(title="", data={CONF_ENABLE_MQTT: enable_mqtt})
 
         if self._auth_mode == AUTH_MODE_EMAIL_OTP:
             email = (user_input.get("email") or "").strip()
@@ -669,6 +761,9 @@ class PhilipsAirplusOptionsFlowHandler(config_entries.OptionsFlow):
                 )
 
         return self.async_create_entry(title="", data={CONF_ENABLE_MQTT: enable_mqtt})
+
+    async def async_step_cloud_options(self, user_input=None):
+        return await self.async_step_init(user_input)
 
     async def async_step_email_otp_options(
         self, user_input: Optional[Dict[str, Any]] = None

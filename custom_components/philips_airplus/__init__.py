@@ -11,9 +11,12 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.service import ServiceCall
-from .const import DOMAIN, CONF_ENABLE_MQTT
+from .const import DOMAIN, CONF_ENABLE_MQTT, CONF_AUTH_MODE, AUTH_MODE_AIRPLUS_CLOUD
 from . import config_flow  # needed so HA can build the options flow
 from .coordinator import PhilipsAirplusDataCoordinator
+from .airmatters_coordinator import AirCloudCoordinator
+from .airmatters import AirCloudAuthError
+from homeassistant.exceptions import ConfigEntryAuthFailed
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,13 +45,13 @@ def _normalize_device_uuid(device_uuid: str) -> str:
     return device_uuid
 
 
-def _iter_coordinators(hass: HomeAssistant) -> list[PhilipsAirplusDataCoordinator]:
+def _iter_coordinators(hass: HomeAssistant) -> list[PhilipsAirplusDataCoordinator | AirCloudCoordinator]:
     domain_data = hass.data.get(DOMAIN, {})
-    coordinators: list[PhilipsAirplusDataCoordinator] = []
+    coordinators: list[PhilipsAirplusDataCoordinator | AirCloudCoordinator] = []
     for key, value in domain_data.items():
         if key == "_services_registered":
             continue
-        if isinstance(value, PhilipsAirplusDataCoordinator):
+        if isinstance(value, (PhilipsAirplusDataCoordinator, AirCloudCoordinator)):
             coordinators.append(value)
     return coordinators
 
@@ -115,6 +118,8 @@ def _ensure_services_registered(hass: HomeAssistant) -> None:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Philips Air+ from a config entry."""
+    hass.data.setdefault(DOMAIN, {})
+    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
     # If all entities for this config entry are disabled in the entity registry,
     # skip active network setup to avoid unwanted MQTT connects. This respects
     # the user's decision to disable devices without removing the integration.
@@ -139,13 +144,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except Exception as exc:
         _LOGGER.debug("Entity registry check failed: %s; proceeding with setup.", exc)
 
-    coordinator = PhilipsAirplusDataCoordinator(hass, entry)
+    try:
+        coordinator_class = (AirCloudCoordinator if entry.data.get(CONF_AUTH_MODE) == AUTH_MODE_AIRPLUS_CLOUD
+                             else PhilipsAirplusDataCoordinator)
+        coordinator = coordinator_class(hass, entry)
+    except AirCloudAuthError as error:
+        raise ConfigEntryAuthFailed(str(error)) from None
 
     # async_config_entry_first_refresh calls _async_setup() internally (via
     # DataUpdateCoordinator.__wrap_async_setup), then performs the first data
     # refresh.  It raises ConfigEntryNotReady on connection failure and
     # ConfigEntryAuthFailed on permanent auth failure — both handled by HA.
-    await coordinator.async_config_entry_first_refresh()
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except BaseException:
+        await coordinator.async_shutdown()
+        raise
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
@@ -159,10 +173,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    coordinator = hass.data[DOMAIN].get(entry.entry_id)
+    coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     if coordinator:
         await coordinator.async_shutdown()
-    
+    else:
+        # Disabled entries have no forwarded platforms or active transport.
+        return True
+
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     
     if unload_ok:
@@ -180,3 +197,6 @@ async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 async def async_get_options_flow(config_entry: ConfigEntry):
     """Return the options flow handler to expose Options in UI."""
     return config_flow.PhilipsAirplusOptionsFlowHandler(config_entry)
+
+async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    await hass.config_entries.async_reload(entry.entry_id)

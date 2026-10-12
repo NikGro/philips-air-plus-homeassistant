@@ -3,7 +3,7 @@
     "step": {
       "auth_method": {
         "title": "Authentifizierungsmethode",
-        "description": "Wähle, wie du dich bei deinem Philips-Konto authentifizieren möchtest.\n\n**Email + Bestätigungscode (empfohlen)** — nutzt denselben Cloud-Account wie die Philips-App und Google Home. E-Mail eingeben, Code per E-Mail erhalten, eingeben. Kein Browser, keine DevTools nötig. Funktioniert mit **Philips Air+** und **Philips HomeID**.\n\n**OAuth PKCE (fortgeschritten)** — nur als Fallback nötig. Browser öffnen, DevTools-Netzwerk-Tab verwenden, um die Weiterleitungs-URL zu erfassen. Funktioniert nur mit Konten der **Philips Air+ App**.",
+        "description": "Für PureProtect 3200i (AC3220/AC3221) bitte **Air+ cloud: email + verification code** auswählen. Dieser Weg verwendet die Geräteliste der Air+-App. DaConnect und OAuth bleiben für ältere Geräte verfügbar.",
         "data": {
           "auth_method": "Authentifizierungsmethode"
         }
@@ -78,7 +78,12 @@
     "abort": {
       "already_configured": "Dieses Gerät ist bereits konfiguriert.",
       "auth_failed": "Authentifizierung fehlgeschlagen.",
-      "reauth_successful": "Erneute Authentifizierung erfolgreich."
+      "reauth_successful": "Erneute Authentifizierung erfolgreich.",
+      "wrong_account": "Bitte mit dem ursprünglichen Philips-Konto anmelden.",
+      "no_devices": "In diesem Air+-Konto sind keine Geräte verknüpft.",
+      "unsupported_model": "Dieses Modell wird vom neuen Air+-Cloud-Weg noch nicht unterstützt.",
+      "device_not_found": "Das eingerichtete Gerät ist nicht mehr mit diesem Konto verknüpft.",
+      "invalid_device": "Ungültige Geräteauswahl."
     }
   },
   "options": {
@@ -93,6 +98,13 @@
         "data_description": {
           "enable_mqtt": "Deaktivieren, um Cloud-/MQTT-Aktivität für diese Integration zu stoppen",
           "auth_code": "Neuen OAuth-Code einfügen, um sich ohne Entfernen der Integration neu zu authentifizieren"
+        }
+      },
+      "cloud_options": {
+        "title": "Philips Air+ Optionen",
+        "description": "Cloud-Verbindung aktivieren oder pausieren. Zugangstokens werden automatisch erneuert.",
+        "data": {
+          "enable_mqtt": "Cloud-Verbindung aktivieren"
         }
       }
     }

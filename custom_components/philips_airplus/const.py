@@ -93,3 +93,9 @@ CONF_ENABLE_MQTT = "enable_mqtt"
 # Default polling interval (was 30s). Increased to reduce network chatter.
 SCAN_INTERVAL = timedelta(seconds=120)
 TOKEN_REFRESH_BUFFER = timedelta(minutes=15)
+
+# Air+ / MxChip backend (distinct from DaConnect/OIDC).
+AUTH_MODE_AIRPLUS_CLOUD = "airplus_cloud"
+CONF_SIGNING_KEY = "signing_key"
+CONF_DEVICE_MODEL = "device_model"
+CONF_DEVICE_TYPE = "device_type"

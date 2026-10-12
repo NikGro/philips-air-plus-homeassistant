@@ -372,3 +372,17 @@ on Windows is still required before claiming end-to-end autonomous login.
 Android installation is **not required** for this next test. A confirmed
 local result will support implementing the durable OTP/UID/token and MQTT
 reconnect path in HA; the earlier app-token-only cloud read remains verified.
+
+## Functional Home Assistant integration (v1.1.0)
+
+The earlier diagnostic release did not change the Home Assistant setup backend.
+The default flow now uses the observed `enduser/deviceList/` registry and supports
+Unicorn AC3220/AC3221 devices. It creates a distinct `airplus_cloud` config entry,
+loads the verified runtime signing reference at setup, renews tokens in memory,
+and fetches fresh `mqttInfo` credentials for every transport replacement.
+The Windows probe confirmed fresh cloud login, one online AC3220/10 device, and
+signed MQTT metadata. Actual reported shadow values establish the power/mode,
+air-quality and filter mappings. The new implementation is covered by HA tests;
+real control and long-term operation still require a live HA installation test.
+Legacy DaConnect entries are deliberately retained on their original backend;
+failed legacy setups must be removed and added through the new Air+ cloud option.

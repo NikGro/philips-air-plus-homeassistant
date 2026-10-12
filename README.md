@@ -1,130 +1,129 @@
 # Philips Air+ Home Assistant Integration
 
-Custom integration for the Philips/Versuni **DaConnect cloud/MQTT** backend.
+Control Philips purifiers through the cloud, including **PureProtect 3200i
+(AC3220/10 / AC3221)** using the Air+ app's device registry and AWS MQTT shadows.
+The older Versuni DaConnect backend remains available for existing devices.
 
-> ## ⚠️ Vibe-coded project: use at your own risk
->
-> This fork was built largely with AI assistance ("vibe coding"). Most of the
-> changes were generated and iterated with an AI model and have **not** been
-> reviewed line by line or tested broadly on real hardware. The AC3221 mapping in
-> particular is derived from the CoAP scheme, not from a real cloud capture.
-> Expect rough edges, back up your Home Assistant config before installing, and
-> please open an issue with debug logs if something misbehaves.
+> This community fork is developed with AI assistance. The new AC3220/10
+> backend is based on captured app traffic and a real read-only cloud shadow.
+> Automated tests cover Home Assistant 2026.10.1; full control and long-term
+> reconnection still need validation in a user's Home Assistant installation.
 
-> **AC3221 status: cloud support is not verified.** This account's purifier is
-> not returned by the existing device-list endpoint. A model mapping does not
-> establish cloud compatibility, and a manual UUID does not solve a different
-> backend. An alternate Air+ cloud route is under investigation; see
-> [AC3221 investigation and read-only diagnostic](docs/ac3221-cloud-investigation.md).
-> The exact interface used by Google Home has not been established.
+## What changed in v1.1.0?
 
-This is a fork of [ShorMeneses/philips-airplus-homeassistant](https://github.com/ShorMeneses/philips-airplus-homeassistant) with two changes:
+Previous releases queried only DaConnect. A purifier visible in Air+ could
+therefore be missing from the Home Assistant device picker. The new default
+**Air+ cloud: email + verification code** queries `enduser/deviceList/` instead.
+An AC3221 can be reported by this cloud as **AC3220/10**, type **Unicorn**.
 
-- **PureProtect 3200i (AC3221) support** added to `models.yaml`. The CoAP-based [ruaan-deysel/ha-philips-airpurifier](https://github.com/ruaan-deysel/ha-philips-airpurifier) already supports this device, but it talks to it locally via CoAP, which on some networks causes frequent connection drops. This fork keeps the original's DaConnect cloud/MQTT transport and adds an experimental model mapping; an AC3221 cloud connection has not yet been verified. The property keys were mapped from the confirmed CoAP addressing scheme for the AC32xx family (see [Architecture](#architecture)) rather than from a captured cloud payload — please open an issue with debug logs if any entity reports an incorrect value.
-- **Smoother onboarding.** Email + verification code is now the default, recommended setup path — no browser DevTools needed. The original OAuth PKCE flow (which required pulling a redirect URL out of the browser Network tab) is kept only as an advanced fallback for accounts where the email flow doesn't apply.
+The integration now provides:
 
-## Features
+- Email verification login, automatic cloud-token renewal and device selection.
+- Cloud on/off and preset modes: Auto, Sleep, Medium, Turbo and Speed1–Speed5.
+- PM2.5, allergen index, fan level, filter-cleaning and replacement-life sensors.
+- MQTT reported-state updates with periodic reconciliation.
+- Fresh signed MQTT credentials on every reconnect, with retry backoff.
+- A cloud connection option that pauses activity and reloads the integration.
 
-- Fan control with preset modes and on/off
-- Fan level sensor with history, useful in Auto mode to see current intensity
-- Filter replacement and cleaning life sensors
-- Maintenance resets via buttons or HA services
-- Real-time updates via MQTT subscription
-- Air quality sensors: PM2.5 concentration and allergen index
-- Standby monitor support for AC0651/10
+For this backend, power uses `D03102`, mode uses `D0310C`, and fan level uses
+`D0310D`. Desired-state acknowledgments do not fabricate a physical state change.
+Filter reset and standby-monitor commands are not exposed for Unicorn: their
+meaning has not been verified. Older DaConnect models retain their existing
+features and mappings in `models.yaml`.
 
-## Supported Devices
+## Installation and updating
 
-| Model | Modes | Fan Level | Filter Monitoring | Air Quality | Standby Monitor |
-|-------|-------|-----------|-------------------|-------------|-----------------|
-| AC0650/10 | Auto, Sleep, Turbo | Yes | Yes | PM2.5 | No |
-| AC0651/10 | Auto, Medium, Sleep, Turbo | Yes | Yes | PM2.5, Allergen Index | Yes |
-| AC1715/10 | Auto, Medium, Sleep, Fast, Turbo | Yes | Yes | PM2.5, Allergen Index | No |
-| AC1715/11 | Auto, Medium, Sleep, Fast, Turbo | Yes | Yes | PM2.5, Allergen Index | No |
-| AC1715/70 | Auto, Medium, Sleep, Fast, Turbo | Yes | Yes | PM2.5 | No |
-| AC3221 (PureProtect 3200i) | Auto, Speed1-5, Sleep, Medium, Turbo | Yes | Yes | PM2.5, Allergen Index | No (unverified, see note above) |
+1. In HACS, add `https://github.com/NikGro/philips-air-plus-homeassistant`
+   as a custom repository with category **Integration**, if not already added.
+2. Install or update **Philips Air+** to **v1.1.0**.
+3. Restart Home Assistant.
+4. Go to **Settings → Devices & services → Add integration → Philips Air+**.
+5. Choose **Air+ cloud: email + verification code (recommended)**.
+6. Enter the account email used in the official Air+ app, then its six-digit
+   email verification code. Select the purifier from the list.
 
-Other Air+ models sharing the same MQTT protocol may work but are untested. New models can be added via `models.yaml` without code changes.
+**Upgrading an unsuccessful v1.0.x setup:** remove the old, unsuccessful
+Philips Air+ configuration entry and add it again using the new **Air+ cloud**
+option. Existing entries retain their original authentication/backend; installing
+an update alone does not change a DaConnect entry into an Air+ cloud entry.
+Keep working entries for older devices. No manual UUID, app installation on the
+PC, packet capture or DevTools is needed for the new setup.
 
-## Installation
+For manual installation, copy `custom_components/philips_airplus` into your
+Home Assistant configuration's `custom_components` directory and restart.
+The purifier must already be linked to the same account in the official Air+ app.
 
-### via HACS (Recommended)
+## Supported backends
 
-1. Go to HACS > Integrations
-2. Click the three dots menu and select "Custom repositories"
-3. Add repository: `https://github.com/NikGro/philips-air-plus-homeassistant`
-4. Select "Integration" as category
-5. Click "Add"
-6. Go to HACS > Integrations and search for "Philips Air+"
-7. Click "Install" and restart Home Assistant
+| Setup option | Devices | Mapping |
+| --- | --- | --- |
+| Air+ cloud (recommended) | Unicorn AC3220/10 and AC3221 variants | Captured cloud registers in `airmatters_model.py` |
+| DaConnect email verification | Older devices linked to the Versuni registry | `models.yaml` |
+| OAuth PKCE (advanced) | Legacy Air+ OAuth accounts | `models.yaml` |
 
-### Manual Installation
+The existing DaConnect mappings include AC0650/10, AC0651/10, AC1715/11 and
+AC1715/70. AC1715/10 compatibility depends on the model reported by that backend;
+adding a mapping alone does not establish discovery or cloud compatibility.
+For OAuth, follow the login URL and redirect instructions displayed by the setup
+flow. This fallback uses the old registry and will not fix a missing Unicorn.
 
-1. Copy the `custom_components/philips_airplus` directory to your Home Assistant `config/custom_components` directory
-2. Restart Home Assistant
+## Account storage and network requirements
 
-## Configuration
+The Air+ setup stores the account identifier and app signing value in the local
+Home Assistant config entry. The signing value is loaded once from a pinned,
+SHA-256-verified upstream research document; downloaded content is never executed.
+The GitHub raw-content host must therefore be reachable during setup. Runtime
+requests use Philips/Gigya HTTPS and the regional AWS IoT MQTT broker on port 443.
+JWTs and signed MQTT URLs remain in memory and are not written to config entries
+or logs. Protect Home Assistant configuration backups as account-sensitive data.
 
-### Prerequisites
+Tokens are renewed without another email code during normal operation. If the
+account is rejected or the device is unlinked, Home Assistant requests
+reauthentication. Use the original account for that device. A network outage
+instead triggers a retry with fresh MQTT credentials.
 
-A Philips account (Philips Air+ or Philips HomeID) with your device already set up in the official mobile app.
+## Troubleshooting
 
-### Authentication: Email + Verification Code (Recommended, default)
+- **No device in the picker:** verify the selected option is **Air+ cloud**, and
+  use the account where the purifier is visible in the official Air+ app.
+- **Unsupported model:** the new backend currently supports the Unicorn AC32xx
+  models above. Other cloud families need their own confirmed mappings.
+- **Unavailable:** check connectivity to Philips and AWS IoT on port 443. The
+  integration retries outages; it cannot make a physically disconnected purifier
+  reconnect to Wi-Fi.
+- **Controls are acknowledged but state stays unchanged:** the integration waits
+  for the device's reported state, rather than assuming it obeyed a command.
 
-This is the current DaConnect client's cloud login flow and needs no browser or DevTools. A successful login does not establish that this device backend lists your purifier; see the AC3221 investigation above.
+The read-only Windows diagnostic and research notes remain available in
+[the investigation document](docs/ac3221-cloud-investigation.md). Remove account
+identifiers, JWTs, signed URLs and captures before sharing diagnostics. The exact
+Google Home server-to-server interface and a downloadable firmware image have
+not been established; this integration uses the confirmed Air+ app backend.
 
-1. Add the integration in Home Assistant. **Email + verification code** is preselected.
-2. Enter the email address associated with your Philips account.
-3. Check your inbox for the verification code.
-4. Enter the code in Home Assistant.
-5. Select your device.
+## Development
 
-Works with both Philips Air+ and Philips HomeID accounts.
+Offline diagnostics:
 
-### Authentication: OAuth PKCE Flow (Advanced fallback)
+```sh
+python -m unittest discover -s tests -v
+pwsh -NoProfile -File tools/airplus_windows_probe.ps1 -OfflineSelfTest
+```
 
-Only needed if the email flow doesn't work for your account. For accounts registered via **Philips Air+** only.
+Home Assistant protocol and integration tests (Python 3.14):
 
-1. Add the integration in Home Assistant and choose **OAuth PKCE (advanced)**. A login URL will be shown.
-2. Open that URL in your browser.
-3. Before logging in, open browser DevTools and switch to the Network tab.
-4. Complete the login and authorization on the Philips website.
-5. In the Network tab, find the redirect to `com.philips.air://loginredirect?code=...` and copy the full URL.
-6. Paste it into Home Assistant as the Authorization Code.
+```sh
+python -m pip install homeassistant==2026.10.1 paho-mqtt==2.1.0 pytest pytest-asyncio
+python -m pytest -q ha_tests
+```
 
-Notes:
+Tests use synthetic account identifiers and mock transports; they do not send
+commands to a real purifier. CI runs both suites.
 
-- On desktop browsers, the `com.philips.air://...` request will fail to open. This is expected.
-- You can paste the full redirect URL or just the code value; the integration extracts the code automatically.
-- If the token expires, go to Integration > Configure and re-authenticate. No need to remove and re-add the integration.
+## Credits and license
 
-## Services
-
-Two HA services are registered:
-
-- `philips_airplus.reset_filter_clean` replicates the official app's "Filter cleaned" reset
-- `philips_airplus.reset_filter_replace` replicates the official app's "New filter" reset
-
-Both accept an optional `device_uuid` parameter to target a specific device when multiple are configured.
-
-## Architecture
-
-All device-specific behavior is driven by `models.yaml`. Each model entry declares its MQTT properties, preset modes, and which sensors, switches, and buttons to create. Adding support for a new model requires only a new entry in `models.yaml`.
-
-Entities are registered lazily: the integration waits for the device to report its model identifier over MQTT before creating entities, so `device_info` can contain the correct model name from the start.
-
-The cloud MQTT property keys (`D03xxx`/`D05xxx`) use the same addressing scheme as the device's local CoAP API (see [kongo09/philips-airpurifier-coap](https://github.com/kongo09/philips-airpurifier-coap)), which is how the AC3221 entry in this fork was derived without a real cloud capture for that model.
-
-## Contributions
-
-Thanks to:
-- @ShorMeneses — original cloud/MQTT integration this fork is based on
-- @vkostakos
-- @markusstephany
-- @renaudallard — the email OTP authentication flow is adapted from the [Philips HomeID integration](https://github.com/renaudallard/homeassistant_philips_homeid)
-- @rgpublic — AC1715/11 model configuration
-- @vraptunovich — AC1715/10 model configuration
-
-## License
-
-This integration is released under the MIT License. See LICENSE file for details.
+Fork of [ShorMeneses/philips-airplus-homeassistant](https://github.com/ShorMeneses/philips-airplus-homeassistant).
+Thanks to the original contributors, including @vkostakos, @markusstephany,
+@rgpublic, and @renaudallard for the legacy HomeID email-login work.
+The new Air+ login uses the independently documented runtime signing protocol in
+[kwesolowski/node-red-contrib-philips-airplus](https://github.com/kwesolowski/node-red-contrib-philips-airplus).
+See [third-party notices](tools/THIRD_PARTY_NOTICE.md) and [LICENSE](LICENSE).
