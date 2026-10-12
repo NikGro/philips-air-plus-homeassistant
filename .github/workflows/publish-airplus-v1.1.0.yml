@@ -1,0 +1,62 @@
+name: Publish Air+ v1.1.0
+on:
+  push:
+    branches: [release/airplus-v1.1.0]
+permissions:
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: eaad0c1d0e7caab7e813e6a8ffda67d017ced18a
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate version and publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_COMMIT: eaad0c1d0e7caab7e813e6a8ffda67d017ced18a
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request, urllib.error
+          from pathlib import Path
+          version = '1.1.0'
+          tag = 'v' + version
+          target = os.environ['RELEASE_COMMIT']
+          repo = os.environ['GH_REPO']
+          assert json.loads(Path('custom_components/philips_airplus/manifest.json').read_text())['version'] == version
+          notes = Path('docs/release-notes-v1.1.0.md').read_text()
+          def api(path, payload=None):
+              request = urllib.request.Request('https://api.github.com/repos/' + repo + path,
+                  data=json.dumps(payload).encode() if payload is not None else None,
+                  headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                           'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json',
+                           'X-GitHub-Api-Version': '2022-11-28'})
+              with urllib.request.urlopen(request) as response:
+                  return json.load(response)
+          assert api('/branches/master')['commit']['sha'] == target, 'Master moved; refusing to release a different revision'
+          try:
+              existing = api('/git/ref/tags/' + tag)
+          except urllib.error.HTTPError as error:
+              if error.code != 404:
+                  raise
+              api('/git/refs', {'ref': 'refs/tags/' + tag, 'sha': target})
+          else:
+              assert existing['object']['sha'] == target, 'Tag already points elsewhere'
+          try:
+              release = api('/releases/tags/' + tag)
+          except urllib.error.HTTPError as error:
+              if error.code != 404:
+                  raise
+              release = api('/releases', {'tag_name': tag, 'target_commitish': target,
+                  'name': 'v1.1.0 — PureProtect 3200i über die Air+-Cloud',
+                  'body': notes, 'draft': False, 'prerelease': False, 'make_latest': 'true'})
+          else:
+              assert release['draft'] is False and release['prerelease'] is False
+          print('Published:', release['html_url'])
+          PY
