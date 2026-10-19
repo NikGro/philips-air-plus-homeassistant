@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import random
+import secrets
 import string
 import time
 import asyncio
@@ -60,7 +61,16 @@ class PhilipsAirplusMQTTClient:
         self._reconnect_base: float = 1.0
         self._reconnect_max_backoff: float = 300.0
         self._rc7_cooldown: float = 120.0
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        # Never hold the state lock while joining the Paho thread. Serialize
+        # connect/teardown separately, so a replacement cannot overtake cleanup.
+        self._operation_lock = threading.Lock()
+        self._shutdown_event = threading.Event()
+        self._connect_event = threading.Event()
+        self._retired_client: Optional[mqtt.Client] = None
+        self._credentials_lock = asyncio.Lock()
+        self._instance = secrets.token_hex(4)
+        self._generation = 0
         self._message_callback: Optional[Callable[[Dict[str, Any]], None]] = None
         self._connection_callback: Optional[Callable[[bool], None]] = None
         self._refreshing_credentials: bool = False  # Flag to maintain availability during credential refresh
@@ -101,26 +111,26 @@ class PhilipsAirplusMQTTClient:
             'Sec-WebSocket-Protocol': 'mqtt',
         }
 
+    def _is_current(self, client: mqtt.Client) -> bool:
+        """Call with the state lock held."""
+        return not self._shutting_down and client is self._client
+
     def _on_connect(self, client: mqtt.Client, userdata: Any, flags: Dict[str, Any], rc: int) -> None:
-        """Handle MQTT connection."""
-        _LOGGER.info("Connected to MQTT with rc=%s", rc)
-        
-        if rc == 0:
-            self._connected = True
-            self._reconnect_attempts = 0
-            self._last_disconnect_rc = 0
-            self._last_disconnect_time = 0.0
-            client.subscribe(self.inbound_topic, qos=0)
-            _LOGGER.info("Subscribed to %s", self.inbound_topic)
-            
+        """Only the currently owned transport may change connection state."""
+        with self._lock:
+            if not self._is_current(client):
+                return
+            self._connected = rc == 0
+            if self._connected:
+                self._reconnect_attempts = 0
+                self._last_disconnect_rc = 0
+                self._last_disconnect_time = 0.0
+                client.subscribe(self.inbound_topic, qos=0)
+            _LOGGER.info("MQTT instance=%s generation=%d connected rc=%s",
+                         self._instance, self._generation, rc)
+            self._connect_event.set()
             if self._connection_callback:
-                self._connection_callback(True)
-        else:
-            self._connected = False
-            _LOGGER.error("Connection failed with rc=%s", rc)
-            
-            if self._connection_callback:
-                self._connection_callback(False)
+                self._connection_callback(self._connected)
 
     def _on_message(self, client: mqtt.Client, userdata: Any, msg: MQTTMessage) -> None:
         """Handle incoming MQTT messages.
@@ -129,6 +139,9 @@ class PhilipsAirplusMQTTClient:
         in a single WebSocket frame.  Use raw_decode to process every
         object in sequence instead of dropping the entire batch.
         """
+        with self._lock:
+            if not self._is_current(client):
+                return
         try:
             payload = msg.payload.decode('utf-8')
             decoder = json.JSONDecoder()
@@ -148,8 +161,11 @@ class PhilipsAirplusMQTTClient:
 
                 _LOGGER.debug("Received message: %s", message_data)
 
-                if self._message_callback:
-                    self._message_callback(message_data)
+                with self._lock:
+                    if not self._is_current(client):
+                        return
+                    if self._message_callback:
+                        self._message_callback(message_data)
 
                 idx = end
 
@@ -159,179 +175,162 @@ class PhilipsAirplusMQTTClient:
             _LOGGER.error("Error processing MQTT message: %s", ex)
 
     def _on_disconnect(self, client: mqtt.Client, userdata: Any, rc: int) -> None:
-        """Handle MQTT disconnect events."""
-        _LOGGER.debug("Disconnected from MQTT with rc=%s", rc)
-        if self._shutting_down:
-            return
-        if rc != 0:
-            _LOGGER.warning("MQTT unexpected disconnect rc=%s", rc)
-            try:
+        """Stop Paho retries; the coordinator alone owns reconnection."""
+        with self._lock:
+            if not self._is_current(client):
+                return
+            self._connected = False
+            self._connect_event.set()
+            if rc != 0:
                 self._reconnect_attempts = min(self._reconnect_attempts + 1, 32)
-            except Exception:
-                self._reconnect_attempts = 1
-            self._last_disconnect_time = time.time()
-            self._last_disconnect_rc = rc
-            try:
-                client.disconnect()
-            except Exception:
-                pass
-        # Always stop the network loop and drop our reference to this client,
-        # regardless of rc. Previously rc=0 disconnects left the old client
-        # (and its network thread) alive while a new client was created on
-        # reconnect, so zombie callbacks could corrupt the connection state.
+                self._last_disconnect_time = time.time()
+                self._last_disconnect_rc = rc
+            _LOGGER.warning("MQTT instance=%s generation=%d disconnected rc=%s",
+                            self._instance, self._generation, rc)
+        # In Paho's thread loop_stop sets its termination flag without joining
+        # itself. Retain ownership until the next teardown joins that thread.
+        try:
+            client.disconnect()
+        except Exception:
+            _LOGGER.debug("MQTT disconnect cleanup failed")
         try:
             client.loop_stop()
         except Exception:
-            pass
-        if self._client is client:
+            _LOGGER.debug("MQTT loop cleanup deferred to teardown")
+        with self._lock:
+            if (self._is_current(client) and self._connection_callback
+                    and not self._refreshing_credentials):
+                self._connection_callback(False)
+
+    def _stop_current_client(self) -> None:
+        """Detach callbacks first, then join outside the state lock.
+
+        Requires _operation_lock. Retain a failed cleanup for a subsequent
+        attempt rather than lose its reference and create a competing client.
+        """
+        with self._lock:
+            client = self._retired_client or self._client
             self._client = None
-        self._connected = False
-        
-        # Skip connection callback during credential refresh to prevent unavailable state
-        if self._connection_callback and not self._refreshing_credentials:
-            self._connection_callback(False)
+            self._connected = False
+            self._retired_client = client
+        if client is None:
+            return
+        try:
+            client.disconnect()
+        except Exception:
+            _LOGGER.debug("MQTT disconnect failed; still stopping network loop")
+        # A failure to stop is deliberately propagated: never start a second
+        # transport while the previous network loop might still be alive.
+        client.loop_stop()
+        self._retired_client = None
+        _LOGGER.debug("MQTT instance=%s generation=%d transport stopped",
+                      self._instance, self._generation)
 
     def _blocking_connect(self, timeout: float = 15.0) -> bool:
-        """Connect to MQTT broker."""
+        """Connect exactly one transport; shutdown interrupts backoff/waiting."""
         with self._lock:
             if self._shutting_down or self._connecting:
                 return False
             if self._connected:
                 return True
             self._connecting = True
-        
         try:
-            # Apply backoff if recent disconnect
-            if self._last_disconnect_time and self._last_disconnect_rc != 0:
-                elapsed = time.time() - self._last_disconnect_time
-                backoff = min(self._reconnect_base * (2 ** max(0, self._reconnect_attempts - 1)), self._reconnect_max_backoff)
-                if elapsed < backoff:
-                    wait = backoff - elapsed
-                    _LOGGER.warning("Throttling reconnect for %.1fs", wait)
-                    time.sleep(wait)
-            
-            # Special cooldown for rc=7
-            if self._last_disconnect_rc == 7:
-                elapsed_since = time.time() - self._last_disconnect_time if self._last_disconnect_time else None
-                if elapsed_since is not None and elapsed_since < self._rc7_cooldown:
-                    wait = self._rc7_cooldown - elapsed_since
-                    _LOGGER.warning("Recent rc=7 disconnect; enforcing cooldown for %.1fs", wait)
-                    time.sleep(wait)
-            
-            headers = self._build_headers()
-
-            # Tear down any leftover client before creating a fresh one, so we
-            # never have two paho network threads alive at once.
-            old_client = self._client
-            if old_client is not None:
+            with self._operation_lock:
                 try:
-                    old_client.loop_stop()
-                except Exception:
-                    pass
-                try:
-                    old_client.disconnect()
-                except Exception:
-                    pass
-                self._client = None
-
-            self._client = mqtt.Client(
-                client_id=self.client_id,
-                transport='websockets',
-                protocol=mqtt.MQTTv311
-            )
-            
-            self._client.ws_set_options(path=MQTT_PATH, headers=headers)
-            
-            try:
-                self._client.tls_set(tls_version=ssl.PROTOCOL_TLSv1_2)
-            except Exception as tls_ex:
-                _LOGGER.warning("Failed to set TLSv1.2: %s", tls_ex)
-            
-            self._client.on_connect = self._on_connect
-            self._client.on_message = self._on_message
-            self._client.on_disconnect = self._on_disconnect
-            
-            _LOGGER.debug("Connecting to %s:%s with client_id=%s", MQTT_HOST, MQTT_PORT, self.client_id)
-            self._client.connect(MQTT_HOST, MQTT_PORT, keepalive=KEEPALIVE)
-            self._client.loop_start()
-            
-            start_ts = time.time()
-            while (time.time() - start_ts) < timeout:
-                if self._connected:
-                    break
-                time.sleep(0.1)
-            
-            if not self._connected:
-                _LOGGER.error("Connection timeout after %.2fs", time.time() - start_ts)
-                if self._client:
+                    self._stop_current_client()
+                    if self._shutdown_event.is_set():
+                        return False
+                    if self._last_disconnect_time and self._last_disconnect_rc:
+                        elapsed = time.time() - self._last_disconnect_time
+                        backoff = min(self._reconnect_base * (2 ** max(
+                            0, self._reconnect_attempts - 1)), self._reconnect_max_backoff)
+                        if self._last_disconnect_rc == 7:
+                            backoff = max(backoff, self._rc7_cooldown)
+                        wait = max(0.0, backoff - elapsed)
+                        if wait:
+                            _LOGGER.warning("MQTT instance=%s reconnect cooldown %.1fs",
+                                            self._instance, wait)
+                            if self._shutdown_event.wait(wait):
+                                return False
+                    if self._shutdown_event.is_set():
+                        return False
+                    client = mqtt.Client(
+                        client_id=self.client_id, transport='websockets',
+                        protocol=mqtt.MQTTv311, reconnect_on_failure=False,
+                    )
+                    with self._lock:
+                        self._client = client
+                        self._generation += 1
+                        self._connect_event.clear()
+                    client.connect_timeout = timeout
+                    client.ws_set_options(path=MQTT_PATH, headers=self._build_headers())
+                    client.tls_set(tls_version=ssl.PROTOCOL_TLSv1_2)
+                    client.on_connect = self._on_connect
+                    client.on_message = self._on_message
+                    client.on_disconnect = self._on_disconnect
+                    if self._shutdown_event.is_set():
+                        self._stop_current_client()
+                        return False
+                    _LOGGER.debug("MQTT instance=%s generation=%d connecting",
+                                  self._instance, self._generation)
+                    client.connect(MQTT_HOST, MQTT_PORT, keepalive=KEEPALIVE)
+                    if not self._shutdown_event.is_set():
+                        client.loop_start()
+                        self._connect_event.wait(timeout)
+                    with self._lock:
+                        connected = self._is_current(client) and self._connected
+                    if not connected:
+                        self._stop_current_client()
+                    return connected
+                except Exception as ex:
+                    # Network exception text may contain signed connection data.
+                    _LOGGER.error("MQTT instance=%s connect failed (%s)",
+                                  self._instance, type(ex).__name__)
                     try:
-                        self._client.loop_stop()
+                        self._stop_current_client()
                     except Exception:
-                        pass
-                    try:
-                        self._client.disconnect()
-                    except Exception:
-                        pass
-                self._client = None
-                return False
-            
-            _LOGGER.info("MQTT connected successfully (%.2fs)", time.time() - start_ts)
-            return True
-            
-        except Exception as ex:
-            _LOGGER.error("Failed during MQTT connect: %s", ex)
-            if self._client:
-                try:
-                    self._client.loop_stop()
-                except Exception:
-                    pass
-                try:
-                    self._client.disconnect()
-                except Exception:
-                    pass
-            self._client = None
-            return False
+                        _LOGGER.error("MQTT instance=%s transport cleanup failed",
+                                      self._instance)
+                    return False
         finally:
             with self._lock:
                 self._connecting = False
 
     async def async_connect(self) -> bool:
-        """Async wrapper for MQTT connect."""
-        if self._connected:
-            return True
-        if self._connecting:
-            return False
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._blocking_connect)
-
-    def shutdown(self) -> None:
-        """Permanent shutdown — suppress all future callbacks."""
-        self._shutting_down = True
-        self.disconnect()
-
-    def disconnect(self) -> None:
-        """Disconnect from MQTT broker."""
+        """Run blocking network operations outside the event loop."""
         with self._lock:
             if self._shutting_down:
-                return
-            if self._client:
-                try:
-                    self._client.loop_stop()
-                    self._client.disconnect()
-                    _LOGGER.debug("MQTT disconnected")
-                except Exception as ex:
-                    _LOGGER.error("Error disconnecting MQTT: %s", ex)
-                finally:
-                    self._client = None
-            self._connected = False
+                return False
+        return await asyncio.to_thread(self._blocking_connect)
+
+    def _begin_shutdown(self) -> None:
+        """Prevent callbacks and wake a worker before waiting for its lock."""
+        with self._lock:
+            self._shutting_down = True
+            self._refreshing_credentials = False
+            self._shutdown_event.set()
+            self._connect_event.set()
+
+    def shutdown(self) -> None:
+        """Permanently stop and join all owned transports; safe to repeat."""
+        self._begin_shutdown()
+        self.disconnect()
+
+    async def async_shutdown(self) -> None:
+        """Stop without joining a network thread on HA's event loop."""
+        self._begin_shutdown()
+        await asyncio.to_thread(self.disconnect)
+
+    def disconnect(self) -> None:
+        """Serialize teardown with connection creation, including shutdown."""
+        with self._operation_lock:
+            self._stop_current_client()
 
     def is_connected(self) -> bool:
-        """Check if MQTT client is connected.
-        
-        Returns True during credential refresh to prevent unavailable state
-        while reconnecting with new tokens.
-        """
-        return self._connected or self._refreshing_credentials
+        """Maintain availability during refresh, never after shutdown."""
+        with self._lock:
+            return not self._shutting_down and (
+                self._connected or self._refreshing_credentials)
 
     def _generate_correlation_id(self) -> str:
         """Generate a correlation ID for commands."""
@@ -509,34 +508,21 @@ class PhilipsAirplusMQTTClient:
             return False
 
     async def async_update_credentials(self, access_token: str, signature: str) -> bool:
-        """Update credentials and reconnect.
-        
-        Sets _refreshing_credentials flag to maintain availability during reconnection.
-        """
-        self.access_token = access_token
-        self.signature = signature
-        
-        with self._lock:
-            if self._connecting:
-                _LOGGER.debug("Connect in progress; deferring credential update")
-                return False
-        
-        # Set flag to prevent unavailable state during reconnection
-        self._refreshing_credentials = True
-        try:
-            self.disconnect()
-            await asyncio.sleep(1)  # Allow time for socket cleanup
-            result = await self.async_connect()
-            return result
-        finally:
-            self._refreshing_credentials = False
-            # If the reconnect failed we are now disconnected, but the
-            # disconnect callback was suppressed while _refreshing_credentials
-            # was True. Fire it now so the coordinator knows the connection is
-            # down and starts its reconnect loop; otherwise nothing would ever
-            # attempt to reconnect again (integration dead until reload).
-            if not self._connected and self._connection_callback:
-                try:
-                    self._connection_callback(False)
-                except Exception as cb_ex:
-                    _LOGGER.error("Connection callback failed: %s", cb_ex)
+        """Serialize refreshes and await complete teardown before replacement."""
+        async with self._credentials_lock:
+            with self._lock:
+                if self._shutting_down or self._connecting:
+                    return False
+                self.access_token = access_token
+                self.signature = signature
+                self._refreshing_credentials = True
+            _LOGGER.debug("MQTT instance=%s refreshing credentials", self._instance)
+            try:
+                await asyncio.to_thread(self.disconnect)
+                return await self.async_connect()
+            finally:
+                with self._lock:
+                    self._refreshing_credentials = False
+                    if (not self._shutting_down and not self._connected
+                            and self._connection_callback):
+                        self._connection_callback(False)

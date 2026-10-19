@@ -114,9 +114,13 @@ class PhilipsAirplusDataCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         self._last_update: Optional[datetime] = None
         self._last_full_request: Optional[datetime] = None
         self._reconnect_task: Optional[asyncio.Task] = None
+        self._stopping = False
+        self._shutdown_task: Optional[asyncio.Task] = None
 
     async def _on_token_refresh(self, token_data: Dict[str, Any]) -> None:
         """Handle token refresh events."""
+        if self._stopping:
+            return
         _LOGGER.debug("Token refreshed, updating config entry")
         _LOGGER.info(
             "Processing token refresh. Expires at: %s", token_data.get("expires_at")
@@ -248,6 +252,8 @@ class PhilipsAirplusDataCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
 
     async def _request_initial_status(self) -> None:
         """Request initial device status."""
+        if self._stopping:
+            return
         if not self._mqtt_client or not self._mqtt_client.is_connected():
             return
         now = datetime.now()
@@ -271,10 +277,14 @@ class PhilipsAirplusDataCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         """Handle MQTT connection status changes."""
         # This runs in the MQTT client thread, so we must schedule the update
         # on the main event loop to safely interact with HA.
+        if self._stopping:
+            return
         self.hass.loop.call_soon_threadsafe(self._on_mqtt_connection_in_loop, connected)
 
     def _on_mqtt_connection_in_loop(self, connected: bool) -> None:
         """Handle MQTT connection status changes (in event loop)."""
+        if self._stopping:
+            return
         self._connected = connected
         if connected:
             _LOGGER.info("Connected to Philips Air+ device %s", self._device_name)
@@ -295,7 +305,7 @@ class PhilipsAirplusDataCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                     delay = 30
                     max_delay = 300
                     try:
-                        while not self._connected and self._mqtt_client:
+                        while not self._stopping and not self._connected and self._mqtt_client:
                             await asyncio.sleep(delay)
                             if self._connected:
                                 break
@@ -341,17 +351,18 @@ class PhilipsAirplusDataCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                                         )
                                         delay = min(delay * 2, max_delay)
                                 finally:
+                                    self._mqtt_client._refreshing_credentials = False
                                     # If the reconnect failed while the flag was set,
                                     # fire the disconnect callback now. Otherwise the
                                     # integration stays offline until reload.
-                                    if not self._mqtt_client.is_connected() and self._mqtt_client._connection_callback:
+                                    if (not self._stopping and not self._mqtt_client.is_connected()
+                                            and self._mqtt_client._connection_callback):
                                         try:
                                             self.hass.loop.call_soon_threadsafe(
                                                 self._mqtt_client._connection_callback, False
                                             )
                                         except Exception:
                                             pass
-                                    self._mqtt_client._refreshing_credentials = False
                             except ConfigEntryAuthFailed:
                                 raise
                             except Exception as ex:
@@ -360,7 +371,8 @@ class PhilipsAirplusDataCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                     except asyncio.CancelledError:
                         return
                     finally:
-                        self._reconnect_task = None
+                        if self._reconnect_task is asyncio.current_task():
+                            self._reconnect_task = None
 
                 self._reconnect_task = self.hass.async_create_task(_reconnect_later())
 
@@ -379,10 +391,14 @@ class PhilipsAirplusDataCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         """Handle incoming MQTT messages."""
         # This runs in the MQTT client thread, so we must schedule the update
         # on the main event loop to safely interact with HA.
+        if self._stopping:
+            return
         self.hass.loop.call_soon_threadsafe(self._on_mqtt_message_in_loop, message_data)
 
     def _on_mqtt_message_in_loop(self, message_data: Dict[str, Any]) -> None:
         """Handle incoming MQTT messages (in event loop)."""
+        if self._stopping:
+            return
         try:
             self._last_update = datetime.now()
             command = message_data.get("cn")
@@ -562,6 +578,8 @@ class PhilipsAirplusDataCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
 
     async def _async_update_data(self) -> Dict[str, Any]:
         """Update device data, recovering the MQTT connection if needed."""
+        if self._stopping:
+            raise UpdateFailed("Coordinator is shutting down")
         if not self._mqtt_client:
             raise UpdateFailed("MQTT client not initialized")
 
@@ -620,6 +638,8 @@ class PhilipsAirplusDataCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         Skips if the background reconnect task is already running, so the two
         recovery paths never fight each other.
         """
+        if self._stopping:
+            return
         if self._reconnect_task and not self._reconnect_task.done():
             return
         if not self._mqtt_client:
@@ -632,6 +652,8 @@ class PhilipsAirplusDataCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         # so always fetch a fresh one before reconnecting. A stale signature
         # would make every reconnect attempt fail with an auth error.
         await self._auth.refresh_signature()
+        if self._stopping:
+            return
         self._mqtt_client.access_token = self._auth.access_token or ""
         self._mqtt_client.signature = self._auth.signature or ""
 
@@ -707,16 +729,24 @@ class PhilipsAirplusDataCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         return self._mqtt_client.reset_filter_replace(raw_key, reset_value)
 
     async def async_shutdown(self) -> None:
-        """Shutdown coordinator."""
-        if self._reconnect_task and not self._reconnect_task.done():
-            self._reconnect_task.cancel()
-            self._reconnect_task = None
+        """All callers await the same teardown, even if one caller is cancelled."""
+        if self._shutdown_task is None:
+            self._stopping = True
+            self._shutdown_task = asyncio.create_task(self._async_finish_shutdown())
+        await asyncio.shield(self._shutdown_task)
 
+    async def _async_finish_shutdown(self) -> None:
+        """Stop polling and await workers before releasing account resources."""
+        await super().async_shutdown()
+        task = self._reconnect_task
+        self._reconnect_task = None
+        if task and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
         if self._mqtt_client:
-            self._mqtt_client.shutdown()
-
+            await self._mqtt_client.async_shutdown()
+        self._connected = False
         if self._auth:
             await self._auth.close()
-
         if self._api_client:
             await self._api_client.close()
