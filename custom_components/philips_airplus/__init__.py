@@ -8,7 +8,7 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers import entity_registry as er
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.service import ServiceCall
 from .const import DOMAIN, CONF_ENABLE_MQTT, CONF_AUTH_MODE, AUTH_MODE_AIRPLUS_CLOUD
@@ -119,7 +119,7 @@ def _ensure_services_registered(hass: HomeAssistant) -> None:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Philips Air+ from a config entry."""
     hass.data.setdefault(DOMAIN, {})
-    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
+    _async_register_options_listener(entry)
     # If all entities for this config entry are disabled in the entity registry,
     # skip active network setup to avoid unwanted MQTT connects. This respects
     # the user's decision to disable devices without removing the integration.
@@ -198,5 +198,18 @@ async def async_get_options_flow(config_entry: ConfigEntry):
     """Return the options flow handler to expose Options in UI."""
     return config_flow.PhilipsAirplusOptionsFlowHandler(config_entry)
 
-async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    await hass.config_entries.async_reload(entry.entry_id)
+@callback
+def _async_register_options_listener(entry: ConfigEntry) -> None:
+    """Reload only for changed options, not persisted authentication tokens."""
+    options = dict(entry.options)
+
+    async def _async_options_updated(hass: HomeAssistant, updated_entry: ConfigEntry) -> None:
+        nonlocal options
+        if updated_entry.options == options:
+            return
+        # Advance before awaiting: queued token notifications must not trigger
+        # another reload for the same options change. Each entry owns its snapshot.
+        options = dict(updated_entry.options)
+        await hass.config_entries.async_reload(updated_entry.entry_id)
+
+    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
