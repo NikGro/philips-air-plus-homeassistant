@@ -2,8 +2,10 @@
 
 ## Scope and baseline
 
-Local fix for issue #5, based on the v1.1.1 commit `45c68df` on `origin/master`.
-The manifest version remains 1.1.1. This change is not published or deployed.
+Development-branch fix for issue #5, based on the v1.1.1 commit `45c68df`
+on `origin/master`. The manifest version remains 1.1.1; identify test builds by
+branch and commit, not by the version displayed in Home Assistant. No versioned
+release or deployment to a production installation is implied.
 
 ## Reproduction
 
