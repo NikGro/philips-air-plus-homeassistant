@@ -147,6 +147,9 @@
     "switch": {
       "standby_monitor": {
         "name": "Sensor-Standby"
+      },
+      "led": {
+        "name": "LED-Licht"
       }
     }
   }

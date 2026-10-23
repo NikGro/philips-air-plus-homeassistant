@@ -86,18 +86,11 @@ class PhilipsAirplusSwitch(CoordinatorEntity, SwitchEntity):
     _attr_has_entity_name = True
 
     @property
-    def name(self) -> str:
-        """Return the name of the switch."""
-        if self.entity_description.key == "led":
-            return "LED light"
-        return super().name
-
-    @property
     def icon(self) -> str:
         """Return the icon based on the current state."""
         if self.entity_description.key == "led":
             # Use different icons based on whether the LED is on or off
-            return "mdi:led-on" if self.is_on else "mdi:led-off"
+            return "mdi:led-on" if self.is_on is True else "mdi:led-off"
         # For other switches, return the default from the description
         return self.entity_description.icon
 

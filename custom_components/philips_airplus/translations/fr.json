@@ -134,6 +134,9 @@
     "switch": {
       "standby_monitor": {
         "name": "Veille du capteur"
+      },
+      "led": {
+        "name": "Voyant LED"
       }
     }
   }
