@@ -211,6 +211,8 @@ models:
       - pm25
       - fan_level
       - allergen_index
+    switches:
+      - led
     buttons:
       - reset_filter_clean
       - reset_filter_replace
