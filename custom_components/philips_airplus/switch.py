@@ -25,6 +25,12 @@ ALL_SWITCH_DESCRIPTIONS: dict[str, SwitchEntityDescription] = {
         entity_category=EntityCategory.CONFIG,
         icon="mdi:eye-check-outline",
     ),
+    "led": SwitchEntityDescription(
+        key="led",
+        translation_key="led",
+        entity_category=EntityCategory.CONFIG,
+        icon="mdi:led-off",          # or "mdi:led-on"
+    ),
 }
 
 
