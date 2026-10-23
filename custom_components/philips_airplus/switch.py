@@ -28,7 +28,6 @@ ALL_SWITCH_DESCRIPTIONS: dict[str, SwitchEntityDescription] = {
     "led": SwitchEntityDescription(
         key="led",
         translation_key="led",
-        entity_category=EntityCategory.CONFIG,
         icon="mdi:led-off",          # or "mdi:led-on"
     ),
 }
@@ -86,6 +85,22 @@ class PhilipsAirplusSwitch(CoordinatorEntity, SwitchEntity):
 
     _attr_has_entity_name = True
 
+    @property
+    def name(self) -> str:
+        """Return the name of the switch."""
+        if self.entity_description.key == "led":
+            return "LED light"
+        return super().name
+
+    @property
+    def icon(self) -> str:
+        """Return the icon based on the current state."""
+        if self.entity_description.key == "led":
+            # Use different icons based on whether the LED is on or off
+            return "mdi:led-on" if self.is_on else "mdi:led-off"
+        # For other switches, return the default from the description
+        return self.entity_description.icon
+
     def __init__(
         self,
         coordinator: PhilipsAirplusDataCoordinator,
@@ -115,22 +130,30 @@ class PhilipsAirplusSwitch(CoordinatorEntity, SwitchEntity):
         """Return True if the switch is on."""
         if not self.coordinator.data:
             return None
-        device_state = self.coordinator.data.get("device_state", {})
-        raw_id = self.coordinator._model_config.get("properties", {}).get(self.entity_description.key)
+        if self.entity_description.key == "led":
+            raw_id = self.coordinator._model_config.get("properties", {}).get("led_on")
+        else:
+            raw_id = self.coordinator._model_config.get("properties", {}).get(self.entity_description.key)
         if raw_id is None:
             return None
-        value = device_state.get(raw_id)
+        value = self.coordinator.data.get("device_state", {}).get(raw_id)
         if value is None:
             return None
         return bool(value)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the switch on."""
-        await self.coordinator.set_property(self.entity_description.key, 1)
+        if self.entity_description.key == "led":
+            await self.coordinator.set_property("led_on", 100)
+        else:
+            await self.coordinator.set_property(self.entity_description.key, 1)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the switch off."""
-        await self.coordinator.set_property(self.entity_description.key, 0)
+        if self.entity_description.key == "led":
+            await self.coordinator.set_property("led_off", 0)
+        else:
+            await self.coordinator.set_property(self.entity_description.key, 0)
 
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
