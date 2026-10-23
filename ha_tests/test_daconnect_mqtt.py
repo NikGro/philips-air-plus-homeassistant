@@ -285,3 +285,48 @@ def test_failed_thread_join_blocks_replacement_and_retains_cleanup():
     old.loop_stop.side_effect = None
     owner.shutdown()
     assert old.loop_stop.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_credential_refresh_retries_once_without_the_flapping_cooldown():
+    """An rc=7 caused by our own refresh must not cost the full 120 s."""
+    owner = wrapper()
+    owner._rc7_refresh_cooldown = 0.05
+    calls = []
+
+    def blocking_connect(timeout=15.0):
+        calls.append(owner._in_credential_refresh)
+        if len(calls) == 1:
+            owner._last_disconnect_rc = 7
+            owner._last_disconnect_time = time.time()
+            return False
+        started = time.time()
+        backoff = owner._effective_rc7_cooldown()
+        assert backoff <= 0.05
+        owner._connected = True
+        return True
+
+    with patch.object(owner, '_blocking_connect', side_effect=blocking_connect):
+        assert await owner.async_update_credentials('new-synthetic', 'new-signature')
+    assert calls == [True, True]
+    assert not owner._in_credential_refresh
+    assert owner._effective_rc7_cooldown() == 120.0
+    await owner.async_shutdown()
+
+
+@pytest.mark.asyncio
+async def test_credential_refresh_does_not_retry_without_rc7():
+    owner = wrapper()
+    with patch.object(owner, '_blocking_connect', return_value=False) as connect:
+        assert not await owner.async_update_credentials('new-synthetic', 'new-signature')
+    assert connect.call_count == 1
+    await owner.async_shutdown()
+
+
+def test_cooldown_wait_is_short_only_during_credential_refresh():
+    owner = wrapper()
+    owner._last_disconnect_rc = 7
+    owner._last_disconnect_time = time.time()
+    assert owner._effective_rc7_cooldown() == 120.0
+    owner._in_credential_refresh = True
+    assert owner._effective_rc7_cooldown() == owner._rc7_refresh_cooldown <= 10.0
