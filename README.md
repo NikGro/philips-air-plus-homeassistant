@@ -33,7 +33,7 @@ setup; no packet capture, PC app or DevTools is required for email login.
 
 1. Add `https://github.com/NikGro/philips-air-plus-homeassistant` in HACS as a
    custom repository, category **Integration**.
-2. Install/update **Philips Air+** to [v1.1.1](https://github.com/NikGro/philips-air-plus-homeassistant/releases/tag/v1.1.1)
+2. Install/update **Philips Air+** to [v1.1.2](https://github.com/NikGro/philips-air-plus-homeassistant/releases/tag/v1.1.2)
    and restart Home Assistant.
 3. Open **Settings → Devices & services → Add integration → Philips Air+**.
 4. Choose the device-specific option above, enter your Philips account email
@@ -100,7 +100,7 @@ CI runs 34 protocol/integration tests with Home Assistant 2026.10.1 and 10 offli
 diagnostic tests, plus the PowerShell self-test. DaConnect regressions include
 real Paho threads connected only to a loopback MQTT fixture; other tests use
 synthetic identifiers and mock transports. They do not control a real purifier.
-See [v1.1.1 lifecycle fixes and testing instructions](docs/release-notes-v1.1.1.md).
+See [v1.1.2 notes](docs/release-notes-v1.1.2.md) and [v1.1.1 lifecycle fixes and testing instructions](docs/release-notes-v1.1.1.md).
 
 Thanks to **@ShorMeneses** for the original integration, **@vraptunovich** for
 AC1715/10 support, @vkostakos, @markusstephany, @rgpublic and @renaudallard for
