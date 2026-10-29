@@ -61,6 +61,10 @@ class PhilipsAirplusMQTTClient:
         self._reconnect_base: float = 1.0
         self._reconnect_max_backoff: float = 300.0
         self._rc7_cooldown: float = 120.0
+        # rc=7 right after our own credential refresh is not a duplicate-client
+        # flap: use a short, bounded wait instead of the full flapping cooldown.
+        self._rc7_refresh_cooldown: float = 5.0
+        self._in_credential_refresh: bool = False
         self._lock = threading.RLock()
         # Never hold the state lock while joining the Paho thread. Serialize
         # connect/teardown separately, so a replacement cannot overtake cleanup.
@@ -226,6 +230,10 @@ class PhilipsAirplusMQTTClient:
         _LOGGER.debug("MQTT instance=%s generation=%d transport stopped",
                       self._instance, self._generation)
 
+    def _effective_rc7_cooldown(self) -> float:
+        """Full flapping cooldown, short while we ourselves swap credentials."""
+        return self._rc7_refresh_cooldown if self._in_credential_refresh else self._rc7_cooldown
+
     def _blocking_connect(self, timeout: float = 15.0) -> bool:
         """Connect exactly one transport; shutdown interrupts backoff/waiting."""
         with self._lock:
@@ -245,7 +253,10 @@ class PhilipsAirplusMQTTClient:
                         backoff = min(self._reconnect_base * (2 ** max(
                             0, self._reconnect_attempts - 1)), self._reconnect_max_backoff)
                         if self._last_disconnect_rc == 7:
-                            backoff = max(backoff, self._rc7_cooldown)
+                            if self._in_credential_refresh:
+                                backoff = self._effective_rc7_cooldown()
+                            else:
+                                backoff = max(backoff, self._effective_rc7_cooldown())
                         wait = max(0.0, backoff - elapsed)
                         if wait:
                             _LOGGER.warning("MQTT instance=%s reconnect cooldown %.1fs",
@@ -516,12 +527,23 @@ class PhilipsAirplusMQTTClient:
                 self.access_token = access_token
                 self.signature = signature
                 self._refreshing_credentials = True
+                self._in_credential_refresh = True
             _LOGGER.debug("MQTT instance=%s refreshing credentials", self._instance)
             try:
                 await asyncio.to_thread(self.disconnect)
+                if await self.async_connect():
+                    return True
+                with self._lock:
+                    retry = (not self._shutting_down and self._last_disconnect_rc == 7)
+                if not retry:
+                    return False
+                _LOGGER.info("MQTT instance=%s rc=7 after credential refresh; "
+                             "one retry after <=%.0fs", self._instance,
+                             self._rc7_refresh_cooldown)
                 return await self.async_connect()
             finally:
                 with self._lock:
+                    self._in_credential_refresh = False
                     self._refreshing_credentials = False
                     if (not self._shutting_down and not self._connected
                             and self._connection_callback):
