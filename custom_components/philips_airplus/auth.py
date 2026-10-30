@@ -9,7 +9,7 @@ import logging
 import re
 import secrets
 import urllib.parse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Callable, Awaitable
 
 import aiohttp
@@ -159,6 +159,12 @@ class PhilipsAirplusOAuth2Implementation:
             return await response.json()
 
 
+
+def expiry_from_epoch(epoch: float) -> datetime:
+    """Token expiry as an aware UTC datetime (immune to DST/local time zone)."""
+    return datetime.fromtimestamp(float(epoch), tz=timezone.utc)
+
+
 class PhilipsAirplusAuth:
     """Authentication manager for Philips Air+."""
 
@@ -226,7 +232,7 @@ class PhilipsAirplusAuth:
             return await self.refresh_access_token()
 
         # Check if token is about to expire
-        if datetime.now() + TOKEN_REFRESH_BUFFER > self.expires_at:
+        if datetime.now(timezone.utc) + TOKEN_REFRESH_BUFFER > self.expires_at:
             _LOGGER.info("Token is about to expire, refreshing")
             return await self.refresh_access_token()
 
@@ -258,12 +264,14 @@ class PhilipsAirplusAuth:
             expires_in = token_data.get("expires_in")
 
             if exp:
-                self.expires_at = datetime.fromtimestamp(int(exp))
+                self.expires_at = expiry_from_epoch(int(exp))
                 _LOGGER.debug(
                     "Token refreshed, expires at (from exp): %s", self.expires_at
                 )
             elif expires_in:
-                self.expires_at = datetime.now() + timedelta(seconds=int(expires_in))
+                self.expires_at = datetime.now(timezone.utc) + timedelta(
+                    seconds=int(expires_in)
+                )
                 _LOGGER.debug(
                     "Token refreshed, expires at (from expires_in): %s", self.expires_at
                 )
