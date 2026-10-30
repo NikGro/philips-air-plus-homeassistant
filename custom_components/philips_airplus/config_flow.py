@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import voluptuous as vol
@@ -389,7 +389,7 @@ class PhilipsAirplusConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 token_expires_at = int(exp)
             elif expires_in:
                 token_expires_at = int(
-                    (datetime.now() + timedelta(seconds=int(expires_in))).timestamp()
+                    (datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))).timestamp()
                 )
 
             if not access_token:
@@ -704,7 +704,7 @@ class PhilipsAirplusOptionsFlowHandler(config_entries.OptionsFlow):
                 elif expires_in:
                     token_expires_at = int(
                         (
-                            datetime.now() + timedelta(seconds=int(expires_in))
+                            datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
                         ).timestamp()
                     )
 

@@ -14,7 +14,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import PhilipsAirplusAPIClient, build_client_id
-from .auth import PhilipsAirplusAuth, AuthenticationExpired
+from .auth import PhilipsAirplusAuth, AuthenticationExpired, expiry_from_epoch
 from .const import (
     AUTH_MODE_OAUTH,
     DOMAIN,
@@ -76,7 +76,7 @@ class PhilipsAirplusDataCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         token_expires_at = entry.data.get(CONF_TOKEN_EXPIRES_AT)
         if token_expires_at is not None:
             try:
-                self._auth.expires_at = datetime.fromtimestamp(float(token_expires_at))
+                self._auth.expires_at = expiry_from_epoch(float(token_expires_at))
                 _LOGGER.debug(
                     "Loaded token expiration from config: %s", self._auth.expires_at
                 )

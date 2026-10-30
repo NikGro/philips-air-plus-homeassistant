@@ -10,7 +10,7 @@ import secrets
 import time
 import urllib.parse
 from base64 import urlsafe_b64encode
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from typing import Optional
 
@@ -353,7 +353,7 @@ class EmailOTPAuth:
             normalized["token_expires_at"] = int(exp)
         elif expires_in:
             normalized["token_expires_at"] = int(
-                (datetime.now() + timedelta(seconds=int(expires_in))).timestamp()
+                (datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))).timestamp()
             )
 
         return normalized
