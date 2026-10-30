@@ -12,7 +12,6 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
-    CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
     PERCENTAGE,
     UnitOfTime,
 )
@@ -20,6 +19,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+
+try:  # HA >= 2025.x; the old CONCENTRATION_* constant is deprecated (removed in 2027.8)
+    from homeassistant.const import UnitOfDensity
+
+    MICROGRAMS_PER_CUBIC_METER = UnitOfDensity.MICROGRAMS_PER_CUBIC_METER
+except ImportError:  # older Home Assistant without UnitOfDensity
+    MICROGRAMS_PER_CUBIC_METER = "µg/m³"
 
 from .const import DOMAIN
 from .coordinator import PhilipsAirplusDataCoordinator
@@ -66,7 +72,7 @@ ALL_SENSOR_DESCRIPTIONS: dict[str, SensorEntityDescription] = {
         translation_key="pm25",
         device_class=SensorDeviceClass.PM25,
         state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
+        native_unit_of_measurement=MICROGRAMS_PER_CUBIC_METER,
         icon="mdi:air-filter",
     ),
     "allergen_index": SensorEntityDescription(
