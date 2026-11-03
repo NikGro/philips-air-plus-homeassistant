@@ -16,7 +16,7 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .auth import PhilipsAirplusAuth, PhilipsAirplusOAuth2Implementation
-from .api import PhilipsAirplusAPIClient, PhilipsAirplusDevice
+from .api import PhilipsAirplusAPIClient, PhilipsAirplusAPIError, PhilipsAirplusDevice
 from .email_auth import EmailOTPAuth, EmailOTPAuthError
 from .airmatters import AirCloudClient, AirCloudError, AirCloudAuthError, AirCloudOTP, load_signing_key
 from .airmatters_model import model_config as cloud_model_config
@@ -252,6 +252,9 @@ class PhilipsAirplusConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 except EmailOTPAuthError as ex:
                     _LOGGER.error("Email OTP auth failed: %s", ex)
                     errors["base"] = "otp_verify_failed"
+                except PhilipsAirplusAPIError as ex:
+                    _LOGGER.error("Device discovery failed: %s", ex)
+                    errors["base"] = "cannot_connect"
 
         return self.async_show_form(
             step_id="email_otp",
