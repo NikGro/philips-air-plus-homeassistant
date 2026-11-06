@@ -11,7 +11,7 @@ from homeassistant.util.dt import utcnow
 
 from .airmatters import AirCloudAuthError, AirCloudClient, AirCloudError
 from .airmatters_model import filter_info, model_config
-from .airmatters_mqtt import AirCloudMQTT
+from .airmatters_mqtt import AirCloudMQTT, create_ssl_context
 from .const import (CONF_DEVICE_ID, CONF_DEVICE_NAME, CONF_DEVICE_UUID,
                     CONF_DEVICE_MODEL, CONF_DEVICE_TYPE, CONF_USER_ID,
                     CONF_SIGNING_KEY, PRESET_MODE_MANUAL, SCAN_INTERVAL)
@@ -32,6 +32,7 @@ class AirCloudCoordinator(DataUpdateCoordinator):
         self._model_config = model_config(entry.data.get(CONF_DEVICE_MODEL, ""),
                                           entry.data.get(CONF_DEVICE_TYPE, ""))
         self._mqtt: AirCloudMQTT | None = None
+        self._ssl_context = None
         self._device_state: dict = {}
         self._online = False
         self._has_state = False
@@ -109,9 +110,11 @@ class AirCloudCoordinator(DataUpdateCoordinator):
                 return
             await self._close_transport()
             connection = await self._client.connection(self.device_id)
+            if self._ssl_context is None:
+                self._ssl_context = await self.hass.async_add_executor_job(create_ssl_context)
             transport = AirCloudMQTT(connection,
                 lambda state: self._state_received(transport, state),
-                lambda: self._disconnected(transport))
+                lambda: self._disconnected(transport), ssl_context=self._ssl_context)
             self._mqtt = transport
             try:
                 await transport.connect()
