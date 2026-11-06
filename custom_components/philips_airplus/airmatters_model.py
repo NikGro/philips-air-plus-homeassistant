@@ -1,4 +1,8 @@
-"""Mappings observed in the Unicorn cloud shadow and its official app branch."""
+"""Mappings observed in the Unicorn cloud shadow and its official app branch.
+
+The AC2221 (cloud type \"Cobra\") uses the same register layout; this was reported
+working on a real AC2221/13 in issue #16 and is not independently verified here.
+"""
 from __future__ import annotations
 
 from copy import deepcopy
@@ -19,11 +23,19 @@ _UNICORN = {
 }
 
 
+# cloud type -> (accepted model prefixes, device name). Type and model must match as a pair.
+_SUPPORTED = {
+    "Unicorn": (("AC3220/", "AC3221/"), "Philips PureProtect 3200i"),
+    "Cobra": (("AC2221/",), "Philips Air Purifier"),
+}
+
+
 def model_config(model: str, device_type: str) -> dict:
-    if device_type != "Unicorn" or not isinstance(model, str) or not model.startswith(("AC3220/", "AC3221/")):
+    supported = _SUPPORTED.get(device_type) if isinstance(device_type, str) else None
+    if not supported or not isinstance(model, str) or not model.startswith(supported[0]):
         return {}
     config = deepcopy(_UNICORN)
-    config["name"] = f"Philips PureProtect 3200i ({model})"
+    config["name"] = f"{supported[1]} ({model})"
     return config
 
 

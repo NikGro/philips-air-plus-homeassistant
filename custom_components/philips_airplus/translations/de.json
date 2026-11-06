@@ -3,7 +3,7 @@
     "step": {
       "auth_method": {
         "title": "Authentifizierungsmethode",
-        "description": "Für PureProtect 3200i (AC3220/AC3221) bitte **Air+ cloud: email + verification code** auswählen. Dieser Weg verwendet die Geräteliste der Air+-App. DaConnect und OAuth bleiben für ältere Geräte verfügbar.",
+        "description": "Für PureProtect 3200i (AC3220/AC3221) / AC2221 bitte **Air+ cloud: email + verification code** auswählen. Dieser Weg verwendet die Geräteliste der Air+-App. DaConnect und OAuth bleiben für ältere Geräte verfügbar.",
         "data": {
           "auth_method": "Authentifizierungsmethode"
         }

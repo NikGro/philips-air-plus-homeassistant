@@ -78,6 +78,7 @@ ALL_SENSOR_DESCRIPTIONS: dict[str, SensorEntityDescription] = {
     "allergen_index": SensorEntityDescription(
         key="allergen_index",
         translation_key="allergen_index",
+        state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:flower-pollen",
     ),
     "fan_level": SensorEntityDescription(

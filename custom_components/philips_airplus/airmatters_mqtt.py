@@ -5,15 +5,22 @@ import asyncio
 from collections.abc import Callable
 import json
 import secrets
+import ssl
 
 import paho.mqtt.client as mqtt
 
 from .airmatters import AirCloudError, CloudConnection
 
 
+def create_ssl_context() -> ssl.SSLContext:
+    """Default client context. Loads the CA store (blocking): call it from an executor."""
+    return ssl.create_default_context()
+
+
 class AirCloudMQTT:
     def __init__(self, connection: CloudConnection, on_state: Callable[[dict], None],
-                 on_disconnect: Callable[[], None], *, client_factory=mqtt.Client):
+                 on_disconnect: Callable[[], None], *, ssl_context: ssl.SSLContext | None = None,
+                 client_factory=mqtt.Client):
         self._connection = connection
         self._on_state = on_state
         self._on_disconnect = on_disconnect
@@ -27,7 +34,10 @@ class AirCloudMQTT:
         self._client = client_factory(mqtt.CallbackAPIVersion.VERSION2,
             client_id=connection.client_id, transport="websockets", reconnect_on_failure=False)
         self._client.connect_timeout = 12
-        self._client.tls_set()
+        if ssl_context is not None:
+            self._client.tls_set_context(ssl_context)
+        else:  # loads the CA store on the calling thread
+            self._client.tls_set()
         self._client.ws_set_options(path=connection.path)
         self._client.on_connect = self._connected_callback
         self._client.on_subscribe = self._subscribed_callback

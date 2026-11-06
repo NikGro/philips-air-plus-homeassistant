@@ -9,7 +9,7 @@
 
 Fork of [ShorMeneses/philips-airplus-homeassistant](https://github.com/ShorMeneses/philips-airplus-homeassistant),
 with additional device support and a separate Air+ cloud connection for
-**PureProtect 3200i (AC3220/10 / AC3221)**.
+**PureProtect 3200i (AC3220/10 / AC3221)** and **AC2221/13**.
 
 ## Why two connection paths?
 
@@ -17,6 +17,7 @@ with additional device support and a separate Air+ cloud connection for
 | --- | --- | --- |
 | AC1715/10, AC1715/11, AC1715/70, AC0650/10, AC0651/10 | **DaConnect: email + verification code (older devices)** | Original cloud/MQTT backend and mappings in `models.yaml` |
 | PureProtect 3200i, reported as AC3220/10 / Unicorn | **Air+ cloud: email + verification code (recommended)** | Separate Air+ API, automatic token renewal and AWS MQTT shadows |
+| AC2221/13, reported as type `Cobra` | **Air+ cloud: email + verification code** | Same Air+ backend and register mapping as the Unicorn models. Confirmed on a real AC2221/13 by a user (issue #16); not tested by the maintainer |
 
 Adding a model to `models.yaml` is enough when discovery and the original MQTT
 protocol already work. **AC1715/10** is such a case: its mapping matches the
@@ -33,7 +34,7 @@ setup; no packet capture, PC app or DevTools is required for email login.
 
 1. Add `https://github.com/NikGro/philips-air-plus-homeassistant` in HACS as a
    custom repository, category **Integration**.
-2. Install/update **Philips Air+** to [v1.1.5](https://github.com/NikGro/philips-air-plus-homeassistant/releases/tag/v1.1.5)
+2. Install/update **Philips Air+** to [v1.1.6](https://github.com/NikGro/philips-air-plus-homeassistant/releases/tag/v1.1.6)
    and restart Home Assistant.
 3. Open **Settings → Devices & services → Add integration → Philips Air+**.
 4. Choose the device-specific option above, enter your Philips account email
@@ -65,9 +66,11 @@ in memory. Treat configuration backups as account-sensitive.
 
 ## Testing and troubleshooting
 
+**Known behaviour, AC2221/13:** with preset Speed5 the device reports fan level 18, the same value as Turbo, and Medium reports 3. The `fan_level` sensor is therefore ambiguous for Speed5; the preset itself (register `D0310C`) is unambiguous.
+
 For **AC1715/10**, use **DaConnect**, then check fan/preset controls and compare
 sensor values with the official app. The new Air+ option currently supports
-Unicorn AC32xx devices; an unsupported-model result there does not disprove the
+Unicorn AC32xx and Cobra AC2221 devices; an unsupported-model result there does not disprove the
 AC1715 mapping. Filter resets are not needed for testing.
 
 When reporting a problem, include the integration/HA versions, selected setup
@@ -100,7 +103,7 @@ CI runs 34 protocol/integration tests with Home Assistant 2026.10.1 and 10 offli
 diagnostic tests, plus the PowerShell self-test. DaConnect regressions include
 real Paho threads connected only to a loopback MQTT fixture; other tests use
 synthetic identifiers and mock transports. They do not control a real purifier.
-See [v1.1.5 notes](docs/release-notes-v1.1.5.md), [v1.1.4 notes](docs/release-notes-v1.1.4.md), [v1.1.3 notes](docs/release-notes-v1.1.3.md), [v1.1.2 notes](docs/release-notes-v1.1.2.md) and [v1.1.1 lifecycle fixes and testing instructions](docs/release-notes-v1.1.1.md).
+See [v1.1.6 notes](docs/release-notes-v1.1.6.md), [v1.1.5 notes](docs/release-notes-v1.1.5.md), [v1.1.4 notes](docs/release-notes-v1.1.4.md), [v1.1.3 notes](docs/release-notes-v1.1.3.md), [v1.1.2 notes](docs/release-notes-v1.1.2.md) and [v1.1.1 lifecycle fixes and testing instructions](docs/release-notes-v1.1.1.md).
 
 Thanks to **@ShorMeneses** for the original integration, **@vraptunovich** for
 AC1715/10 support, @vkostakos, @markusstephany, @rgpublic and @renaudallard for

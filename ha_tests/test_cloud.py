@@ -12,6 +12,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from custom_components.philips_airplus import airmatters as api
+from custom_components.philips_airplus.airmatters_model import model_config
 from custom_components.philips_airplus.airmatters_mqtt import AirCloudMQTT
 from custom_components.philips_airplus.airmatters_coordinator import AirCloudCoordinator
 from custom_components.philips_airplus.config_flow import PhilipsAirplusConfigFlow
@@ -177,7 +178,7 @@ async def test_coordinator_fan_and_sensors_use_correct_power_and_filters(tmp_pat
     coordinator._client.devices = AsyncMock(return_value=[DEVICE])
     coordinator._client.connection = AsyncMock(return_value=CONNECTION)
     created = []
-    def factory(connection, on_state, on_disconnect):
+    def factory(connection, on_state, on_disconnect, **_):
         transport = Mock(connected=True)
         transport.connect = AsyncMock(); transport.close = AsyncMock()
         async def read():
@@ -316,7 +317,7 @@ async def test_background_disconnect_reconnects_with_fresh_metadata(tmp_path):
     coordinator._client.devices = AsyncMock(return_value=[DEVICE])
     coordinator._client.connection = AsyncMock(return_value=CONNECTION)
     received = asyncio.Event(); transports = []
-    def factory(connection, on_state, on_disconnect):
+    def factory(connection, on_state, on_disconnect, **_):
         transport = Mock(connected=True, disconnect_callback=on_disconnect)
         transport.connect = AsyncMock(); transport.close = AsyncMock()
         async def read():
@@ -331,3 +332,74 @@ async def test_background_disconnect_reconnects_with_fresh_metadata(tmp_path):
         assert len(transports) == 2 and coordinator.is_connected
         assert coordinator._client.connection.await_count == 2
     await coordinator.async_shutdown()
+
+
+@pytest.mark.parametrize('device_type,model', [
+    ('Unicorn', 'AC3220/10'), ('Unicorn', 'AC3221/13'), ('Cobra', 'AC2221/13')])
+def test_model_config_accepts_known_type_model_pairs(device_type, model):
+    config = model_config(model, device_type)
+    assert config and config['properties']['power'] == 'D03102'
+    assert model in config['name']
+
+
+@pytest.mark.parametrize('device_type,model', [
+    ('Cobra', 'AC3220/10'), ('Unicorn', 'AC2221/13'), ('Cobra', ''), ('Cobra', None),
+    ('Other', 'AC2221/13'), ('', 'AC2221/13')])
+def test_model_config_rejects_mismatched_or_unknown_pairs(device_type, model):
+    assert model_config(model, device_type) == {}
+
+
+def test_device_names_are_per_model():
+    assert model_config('AC3220/10', 'Unicorn')['name'] == 'Philips PureProtect 3200i (AC3220/10)'
+    cobra = model_config('AC2221/13', 'Cobra')['name']
+    assert 'PureProtect' not in cobra and 'AC2221/13' in cobra
+
+
+@pytest.mark.asyncio
+async def test_flow_offers_cobra_ac2221(tmp_path):
+    cobra = {'device_id': 'cobra_1', 'device_info': {'name': 'Study', 'type': 'Cobra',
+             'modelid': 'AC2221/13', 'is_online': True}}
+    flow = PhilipsAirplusConfigFlow(); flow.hass = HomeAssistant(str(tmp_path))
+    flow._auth_mode = AUTH_MODE_AIRPLUS_CLOUD
+    flow._email = 'test@example.com'; flow._cloud_key = KEY; flow._vtoken = 'verification'
+    with patch('custom_components.philips_airplus.config_flow.async_get_clientsession', return_value=Mock()), \
+         patch('custom_components.philips_airplus.config_flow.AirCloudOTP.verify', AsyncMock(return_value='test_uid')), \
+         patch('custom_components.philips_airplus.config_flow.AirCloudClient.devices', AsyncMock(return_value=[cobra])):
+        result = await flow.async_step_email_otp({'otp_code': '123456'})
+    assert result['type'] == 'form' and result['step_id'] == 'select_device'
+
+
+@pytest.mark.asyncio
+async def test_mqtt_uses_prebuilt_ssl_context_and_never_loads_cert_store_on_the_loop():
+    import ssl
+    context = ssl.create_default_context()
+    with patch.object(ssl.SSLContext, 'load_default_certs', side_effect=AssertionError('blocking')), \
+         patch.object(ssl.SSLContext, 'set_default_verify_paths', side_effect=AssertionError('blocking')):
+        transport = AirCloudMQTT(CONNECTION, Mock(), Mock(), ssl_context=context)
+    assert transport._client._ssl_context is context
+    await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_coordinator_builds_ssl_context_in_executor_once(tmp_path):
+    hass = HomeAssistant(str(tmp_path)); config = entry()
+    with patch('custom_components.philips_airplus.airmatters_coordinator.async_get_clientsession', return_value=Mock()):
+        coordinator = AirCloudCoordinator(hass, config)
+    coordinator._client.connection = AsyncMock(return_value=CONNECTION)
+    contexts = []
+    def factory(connection, on_state, on_disconnect, *, ssl_context=None):
+        contexts.append(ssl_context)
+        transport = Mock(connected=False); transport.connect = AsyncMock(); transport.close = AsyncMock()
+        return transport
+    calls = []
+    async def executor(func, *args):
+        calls.append(func); return func(*args)
+    hass.async_add_executor_job = executor
+    with patch('custom_components.philips_airplus.airmatters_coordinator.AirCloudMQTT', side_effect=factory):
+        await coordinator._ensure_connection(); await coordinator._ensure_connection()
+    assert len(calls) == 1 and contexts[0] is contexts[1] and contexts[0] is not None
+
+
+def test_allergen_index_is_a_measurement():
+    from homeassistant.components.sensor import SensorStateClass
+    assert ALL_SENSOR_DESCRIPTIONS['allergen_index'].state_class == SensorStateClass.MEASUREMENT
