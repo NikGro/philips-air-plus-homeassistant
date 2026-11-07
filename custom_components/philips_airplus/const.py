@@ -13,7 +13,9 @@ USER_SELF_ENDPOINT = f"{API_BASE_URL}/da/user/self"
 
 # HTTP identity
 # Keep a mobile-style user agent to better match official app traffic.
-HTTP_USER_AGENT = "okhttp/4.12.0 (Android 14; Pixel 7)"
+# "okhttp/4.12.0 (Android 14; Pixel 7)" is rejected with HTTP 403 by the
+# DaConnect API, so do not use it.
+HTTP_USER_AGENT = "okhttp/4.12.0"
 
 # Default OIDC settings (can be overridden by environment variables)
 # Script example issuer path contains a tenant segment like 4_JGZWlP8eQHpEqkvQElolbA
