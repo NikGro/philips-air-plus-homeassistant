@@ -110,7 +110,7 @@ AC1715/10 support, **@autowert66** for finding and fixing the DaConnect 403
 ([PR #15](https://github.com/NikGro/philips-air-plus-homeassistant/pull/15)),
 **@hencar74** for the AC2221 report and tests
 ([#16](https://github.com/NikGro/philips-air-plus-homeassistant/issues/16)),
-**@Luke2105-Loft59** for the long-running AC1715/10 test reports
+**@Luke2105-Loft59** for the long-running AC1715/10 test reports and the DST and deprecation finds
 ([#5](https://github.com/NikGro/philips-air-plus-homeassistant/issues/5)), @vkostakos, @markusstephany, @rgpublic and @renaudallard for
 prior contributions. The new login also uses research from
 [kwesolowski/node-red-contrib-philips-airplus](https://github.com/kwesolowski/node-red-contrib-philips-airplus).

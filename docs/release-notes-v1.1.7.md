@@ -1,7 +1,17 @@
 # v1.1.7 — DaConnect works again (User-Agent rejected with HTTP 403)
 
-Thanks to **@autowert66** for finding the cause, reproducing it from two networks
-and sending the fix in PR #15.
+## Thanks
+
+- **@autowert66**: found the DaConnect 403, reproduced it from two networks and
+  sent the fix in PR #15.
+- **@hencar74**: reported and tested the AC2221/13 on a real device (#16, v1.1.6),
+  then confirmed the release on Home Assistant 2026.11.0 and named the product
+  (Philips PureProtect Quiet 2200 Series).
+- **@Luke2105-Loft59**: tested the reconnect fixes for the AC1715/10 over weeks
+  with debug logs (#5, v1.1.3 to v1.1.5), and spotted the deprecated PM2.5 constant
+  and the daylight-saving token problem.
+- **@vraptunovich**, **@ShorMeneses** and earlier contributors are credited in the
+  README.
 
 ## Fixed
 
