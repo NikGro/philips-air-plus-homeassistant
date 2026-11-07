@@ -34,7 +34,7 @@ setup; no packet capture, PC app or DevTools is required for email login.
 
 1. Add `https://github.com/NikGro/philips-air-plus-homeassistant` in HACS as a
    custom repository, category **Integration**.
-2. Install/update **Philips Air+** to [v1.1.6](https://github.com/NikGro/philips-air-plus-homeassistant/releases/tag/v1.1.6)
+2. Install/update **Philips Air+** to [v1.1.7](https://github.com/NikGro/philips-air-plus-homeassistant/releases/tag/v1.1.7)
    and restart Home Assistant.
 3. Open **Settings → Devices & services → Add integration → Philips Air+**.
 4. Choose the device-specific option above, enter your Philips account email
@@ -99,14 +99,19 @@ The exact Google Home server interface and a firmware download are not establish
 
 ## Development and credits
 
-CI runs 34 protocol/integration tests with Home Assistant 2026.10.1 and 10 offline
+CI runs 75 protocol/integration tests with Home Assistant 2026.10.1 and 10 offline
 diagnostic tests, plus the PowerShell self-test. DaConnect regressions include
 real Paho threads connected only to a loopback MQTT fixture; other tests use
 synthetic identifiers and mock transports. They do not control a real purifier.
-See [v1.1.6 notes](docs/release-notes-v1.1.6.md), [v1.1.5 notes](docs/release-notes-v1.1.5.md), [v1.1.4 notes](docs/release-notes-v1.1.4.md), [v1.1.3 notes](docs/release-notes-v1.1.3.md), [v1.1.2 notes](docs/release-notes-v1.1.2.md) and [v1.1.1 lifecycle fixes and testing instructions](docs/release-notes-v1.1.1.md).
+See [v1.1.7 notes](docs/release-notes-v1.1.7.md), [v1.1.6 notes](docs/release-notes-v1.1.6.md), [v1.1.5 notes](docs/release-notes-v1.1.5.md), [v1.1.4 notes](docs/release-notes-v1.1.4.md), [v1.1.3 notes](docs/release-notes-v1.1.3.md), [v1.1.2 notes](docs/release-notes-v1.1.2.md) and [v1.1.1 lifecycle fixes and testing instructions](docs/release-notes-v1.1.1.md).
 
 Thanks to **@ShorMeneses** for the original integration, **@vraptunovich** for
-AC1715/10 support, @vkostakos, @markusstephany, @rgpublic and @renaudallard for
+AC1715/10 support, **@autowert66** for finding and fixing the DaConnect 403
+([PR #15](https://github.com/NikGro/philips-air-plus-homeassistant/pull/15)),
+**@hencar74** for the AC2221 report and tests
+([#16](https://github.com/NikGro/philips-air-plus-homeassistant/issues/16)),
+**@Luke2105-Loft59** for the long-running AC1715/10 test reports
+([#5](https://github.com/NikGro/philips-air-plus-homeassistant/issues/5)), @vkostakos, @markusstephany, @rgpublic and @renaudallard for
 prior contributions. The new login also uses research from
 [kwesolowski/node-red-contrib-philips-airplus](https://github.com/kwesolowski/node-red-contrib-philips-airplus).
 See [third-party notices](tools/THIRD_PARTY_NOTICE.md) and [LICENSE](LICENSE).
