@@ -26,7 +26,7 @@ _UNICORN = {
 # cloud type -> (accepted model prefixes, device name). Type and model must match as a pair.
 _SUPPORTED = {
     "Unicorn": (("AC3220/", "AC3221/"), "Philips PureProtect 3200i"),
-    "Cobra": (("AC2221/",), "Philips Air Purifier"),
+    "Cobra": (("AC2221/",), "Philips PureProtect Quiet 2200 Series"),
 }
 
 

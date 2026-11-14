@@ -495,8 +495,15 @@ class PhilipsAirplusConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return self.async_abort(reason="auth_failed")
 
         # Create device selection options mapping key -> label
+        # The Air+ cloud reports an internal type ("Cobra", "Unicorn"); the model is what users know.
+        def _label(device):
+            detail = device.type
+            if self._auth_mode == AUTH_MODE_AIRPLUS_CLOUD:
+                detail = device.data.get("model") or device.type
+            return f"{device.name} ({detail})"
+
         device_options = {
-            str(index): f"{device.name} ({device.type})"
+            str(index): _label(device)
             for index, device in enumerate(self._devices)
         }
 

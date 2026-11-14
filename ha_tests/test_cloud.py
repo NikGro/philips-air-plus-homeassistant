@@ -352,7 +352,7 @@ def test_model_config_rejects_mismatched_or_unknown_pairs(device_type, model):
 def test_device_names_are_per_model():
     assert model_config('AC3220/10', 'Unicorn')['name'] == 'Philips PureProtect 3200i (AC3220/10)'
     cobra = model_config('AC2221/13', 'Cobra')['name']
-    assert 'PureProtect' not in cobra and 'AC2221/13' in cobra
+    assert cobra == 'Philips PureProtect Quiet 2200 Series (AC2221/13)'
 
 
 @pytest.mark.asyncio
@@ -403,3 +403,28 @@ async def test_coordinator_builds_ssl_context_in_executor_once(tmp_path):
 def test_allergen_index_is_a_measurement():
     from homeassistant.components.sensor import SensorStateClass
     assert ALL_SENSOR_DESCRIPTIONS['allergen_index'].state_class == SensorStateClass.MEASUREMENT
+
+
+@pytest.mark.asyncio
+async def test_cloud_device_selection_shows_model_not_cloud_type(tmp_path):
+    from custom_components.philips_airplus.api import PhilipsAirplusDevice
+    flow = PhilipsAirplusConfigFlow(); flow.hass = HomeAssistant(str(tmp_path))
+    flow._auth_mode = AUTH_MODE_AIRPLUS_CLOUD
+    flow._devices = [
+        PhilipsAirplusDevice({'uuid': 'a', 'name': 'Livingroom', 'type': 'Cobra', 'model': 'AC2221/13'}),
+        PhilipsAirplusDevice({'uuid': 'b', 'name': 'Bedroom', 'type': 'Unicorn', 'model': 'AC3220/10'}),
+        PhilipsAirplusDevice({'uuid': 'c', 'name': 'Study', 'type': 'Cobra'})]
+    result = await flow.async_step_select_device()
+    options = next(v for k, v in result['data_schema'].schema.items() if str(k) == 'device').container
+    assert options == {'0': 'Livingroom (AC2221/13)', '1': 'Bedroom (AC3220/10)', '2': 'Study (Cobra)'}
+
+
+@pytest.mark.asyncio
+async def test_other_auth_modes_keep_showing_the_type(tmp_path):
+    from custom_components.philips_airplus.api import PhilipsAirplusDevice
+    flow = PhilipsAirplusConfigFlow(); flow.hass = HomeAssistant(str(tmp_path))
+    flow._auth_mode = AUTH_MODE_EMAIL_OTP
+    flow._devices = [PhilipsAirplusDevice({'uuid': 'a', 'name': 'Kitchen', 'type': 'DA', 'model': 'AC1715/10'})]
+    result = await flow.async_step_select_device()
+    options = next(v for k, v in result['data_schema'].schema.items() if str(k) == 'device').container
+    assert options == {'0': 'Kitchen (DA)'}
