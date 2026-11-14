@@ -107,6 +107,14 @@
           "enable_mqtt": "Cloud-Verbindung aktivieren"
         }
       }
+    },
+    "error": {
+      "auth_failed": "Authentifizierung fehlgeschlagen. Bitte versuche es erneut.",
+      "cannot_connect": "Verbindung zum Philips Air+ Dienst nicht möglich.",
+      "invalid_token": "Ungültiger Zugriffstoken. Bitte überprüfe deinen Token und versuche es erneut.",
+      "missing_code": "Autorisierungscode ist erforderlich.",
+      "otp_send_failed": "Senden des Bestätigungscodes fehlgeschlagen. Überprüfe deine E-Mail-Adresse und versuche es erneut.",
+      "otp_verify_failed": "Überprüfung des Codes fehlgeschlagen. Stelle sicher, dass du ihn korrekt eingegeben hast."
     }
   },
   "entity": {

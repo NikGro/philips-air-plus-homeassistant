@@ -107,6 +107,14 @@
           "enable_mqtt": "Enable cloud connection"
         }
       }
+    },
+    "error": {
+      "auth_failed": "Authentication failed. Please try again.",
+      "cannot_connect": "Unable to connect to Philips Air+ service.",
+      "invalid_token": "Invalid access token. Please check your token and try again.",
+      "missing_code": "Authorization code is required.",
+      "otp_send_failed": "Failed to send verification code. Check your email address and try again.",
+      "otp_verify_failed": "Failed to verify the code. Make sure you entered it correctly."
     }
   },
   "entity": {

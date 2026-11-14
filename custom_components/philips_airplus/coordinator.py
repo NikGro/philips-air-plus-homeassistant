@@ -14,7 +14,12 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import PhilipsAirplusAPIClient, build_client_id
-from .auth import PhilipsAirplusAuth, AuthenticationExpired, expiry_from_epoch
+from .auth import (
+    AuthenticationExpired,
+    AuthenticationUnavailable,
+    PhilipsAirplusAuth,
+    expiry_from_epoch,
+)
 from .const import (
     AUTH_MODE_OAUTH,
     DOMAIN,
@@ -247,6 +252,11 @@ class PhilipsAirplusDataCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         except ConfigEntryAuthFailed:
             # Re-raise ConfigEntryAuthFailed as-is
             raise
+        except AuthenticationUnavailable as ex:
+            # The service is unreachable or temporarily failing. Report it as a
+            # setup failure so Home Assistant retries the entry (ConfigEntryNotReady)
+            # instead of treating it as an expired login.
+            raise UpdateFailed(f"Philips Air+ service unreachable: {ex}") from ex
         except Exception as ex:
             raise UpdateFailed(f"Failed to set up coordinator: {ex}") from ex
 
@@ -325,6 +335,16 @@ class PhilipsAirplusDataCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                                     )
                                     self.entry.async_start_reauth(self.hass)
                                     return
+                                except AuthenticationUnavailable as ex:
+                                    # Cannot refresh and the token may be dead:
+                                    # back off and retry instead of re-authing.
+                                    _LOGGER.warning(
+                                        "Token refresh deferred for %s: %s",
+                                        self._device_name,
+                                        ex,
+                                    )
+                                    delay = min(delay * 2, max_delay)
+                                    continue
 
                                 await self._auth.refresh_signature()
                                 self._mqtt_client.access_token = (
@@ -610,6 +630,10 @@ class PhilipsAirplusDataCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             raise ConfigEntryAuthFailed(
                 "Authentication expired, please re-authenticate"
             ) from ex
+        except AuthenticationUnavailable as ex:
+            # Service unreachable: report a retryable update failure so entities
+            # go unavailable instead of demanding a re-authentication.
+            raise UpdateFailed(str(ex)) from ex
 
         # Self-healing: if we are disconnected and no reconnect task is
         # already working on it, attempt a reconnect right now. This turns the

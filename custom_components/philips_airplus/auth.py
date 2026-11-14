@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -32,8 +33,48 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
+def _is_retryable_error(ex: BaseException) -> bool:
+    """Return True when a failure should be retried, not re-authenticated.
+
+    DNS failures, refused connections, TLS errors, timeouts and client-side
+    errors such as a blocked redirect or a malformed body all mean the request
+    did not produce a usable answer. Home Assistant retries those; only a
+    rejected credential needs the user, so they must not be reported as an
+    expired login.
+    """
+    return isinstance(
+        ex,
+        (
+            aiohttp.ClientError,
+            asyncio.TimeoutError,
+            OSError,
+            json.JSONDecodeError,
+            UnicodeDecodeError,
+        ),
+    )
+
+
+def _is_transient_status(status: int) -> bool:
+    """Return True for HTTP statuses that mean "try again later".
+
+    A rejected token arrives as 400/401/403 and needs the user; a rate limit or
+    a server-side fault is temporary and must not be reported as expired auth.
+    """
+    return status in (408, 425, 429) or status >= 500
+
+
 class AuthenticationExpired(Exception):
     """Raised when authentication has expired and reauth is required."""
+
+    pass
+
+
+class AuthenticationUnavailable(Exception):
+    """Raised when the auth service is unreachable or temporarily failing.
+
+    The stored credentials are still valid, so the caller should retry later
+    instead of asking the user to re-authenticate.
+    """
 
     pass
 
@@ -152,6 +193,12 @@ class PhilipsAirplusOAuth2Implementation:
             },
         ) as response:
             if response.status != 200:
+                # Check the status before decoding the body: a transient failure
+                # does not need its (possibly undecodable) payload.
+                if _is_transient_status(response.status):
+                    raise AuthenticationUnavailable(
+                        f"Token endpoint returned HTTP {response.status}"
+                    )
                 text = await response.text()
                 raise RuntimeError(
                     f"Refresh token request failed: {response.status} - {text}"
@@ -200,7 +247,17 @@ class PhilipsAirplusAuth:
             self.signature = await self._fetch_signature()
 
             return True
+        except AuthenticationUnavailable:
+            raise
         except Exception as ex:
+            if _is_retryable_error(ex):
+                # Not an authentication problem. Propagate it so the caller
+                # treats setup as temporarily failed (Home Assistant retries)
+                # instead of demanding a re-authentication.
+                _LOGGER.warning(
+                    "Auth initialization deferred, service unreachable: %s", ex
+                )
+                raise AuthenticationUnavailable(str(ex)) from ex
             _LOGGER.error("Auth initialization failed: %s", ex)
             return False
 
@@ -234,7 +291,19 @@ class PhilipsAirplusAuth:
         # Check if token is about to expire
         if datetime.now(timezone.utc) + TOKEN_REFRESH_BUFFER > self.expires_at:
             _LOGGER.info("Token is about to expire, refreshing")
-            return await self.refresh_access_token()
+            try:
+                return await self.refresh_access_token()
+            except AuthenticationUnavailable:
+                if datetime.now(timezone.utc) < self.expires_at:
+                    # Refreshing early is an optimisation. If it fails while the
+                    # current token is still valid, keep using it and let the
+                    # next poll retry, rather than taking the device offline.
+                    _LOGGER.debug(
+                        "Token refresh deferred, current token is valid until %s",
+                        self.expires_at,
+                    )
+                    return True
+                raise
 
         return True
 
@@ -305,6 +374,8 @@ class PhilipsAirplusAuth:
                     _LOGGER.error("Failed to execute token callback: %s", cb_ex)
 
             return True
+        except AuthenticationUnavailable:
+            raise
         except RuntimeError as ex:
             error_msg = str(ex)
             # Check if refresh token is revoked/expired (400 with invalid_grant or 401)
@@ -324,6 +395,11 @@ class PhilipsAirplusAuth:
                 _LOGGER.error("Failed to refresh token: %s", ex)
             return False
         except Exception as ex:
+            if _is_retryable_error(ex):
+                # Keep the stored credentials: the service was unreachable, so
+                # retrying later is the right response, not re-authenticating.
+                _LOGGER.warning("Token refresh deferred, service unreachable: %s", ex)
+                raise AuthenticationUnavailable(str(ex)) from ex
             _LOGGER.error("Failed to refresh token: %s", ex)
             return False
 
@@ -338,6 +414,10 @@ class PhilipsAirplusAuth:
 
         async with session.get(USER_SELF_ENDPOINT, headers=headers) as response:
             if response.status != 200:
+                if _is_transient_status(response.status):
+                    raise AuthenticationUnavailable(
+                        f"User endpoint returned HTTP {response.status}"
+                    )
                 raise RuntimeError(f"Failed to fetch user ID: {response.status}")
             data = await response.json()
             return data.get("id")
@@ -353,6 +433,10 @@ class PhilipsAirplusAuth:
 
         async with session.get(SIGNATURE_ENDPOINT, headers=headers) as response:
             if response.status != 200:
+                if _is_transient_status(response.status):
+                    raise AuthenticationUnavailable(
+                        f"Signature endpoint returned HTTP {response.status}"
+                    )
                 raise RuntimeError(f"Failed to fetch signature: {response.status}")
             data = await response.json()
             return data.get("signature")

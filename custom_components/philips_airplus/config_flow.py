@@ -15,7 +15,11 @@ from homeassistant.const import CONF_ACCESS_TOKEN
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .auth import PhilipsAirplusAuth, PhilipsAirplusOAuth2Implementation
+from .auth import (
+    AuthenticationUnavailable,
+    PhilipsAirplusAuth,
+    PhilipsAirplusOAuth2Implementation,
+)
 from .api import PhilipsAirplusAPIClient, PhilipsAirplusAPIError, PhilipsAirplusDevice
 from .email_auth import EmailOTPAuth, EmailOTPAuthError
 from .airmatters import AirCloudClient, AirCloudError, AirCloudAuthError, AirCloudOTP, load_signing_key
@@ -442,6 +446,31 @@ class PhilipsAirplusConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
         """Handle device selection."""
+        # Create device selection options mapping key -> label
+        # The Air+ cloud reports an internal type ("Cobra", "Unicorn"); the model is what users know.
+        def _label(device):
+            detail = device.type
+            if self._auth_mode == AUTH_MODE_AIRPLUS_CLOUD:
+                detail = device.data.get("model") or device.type
+            return f"{device.name} ({detail})"
+
+        device_options = {
+            str(index): _label(device)
+            for index, device in enumerate(self._devices)
+        }
+
+        def _show_device_form(errors: Optional[Dict[str, str]] = None) -> FlowResult:
+            _LOGGER.debug("Device options for selection: %s", device_options)
+            return self.async_show_form(
+                step_id="select_device",
+                data_schema=vol.Schema(
+                    {
+                        vol.Required("device"): vol.In(device_options),
+                    }
+                ),
+                errors=errors or {},
+            )
+
         if user_input is not None:
             device_index = user_input["device"]
             try:
@@ -463,7 +492,15 @@ class PhilipsAirplusConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
             self._auth._client_id = self._client_id
 
-            if await self._auth.initialize():
+            try:
+                initialized = await self._auth.initialize()
+            except AuthenticationUnavailable as ex:
+                # The device API is unreachable or temporarily failing. Ask the
+                # user to retry instead of escaping the flow unhandled.
+                _LOGGER.warning("Philips Air+ service unreachable: %s", ex)
+                return _show_device_form({"base": "cannot_connect"})
+
+            if initialized:
                 data = {
                     CONF_AUTH_MODE: self._auth_mode,
                     CONF_ACCESS_TOKEN: self._access_token,
@@ -494,29 +531,7 @@ class PhilipsAirplusConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 return self.async_abort(reason="auth_failed")
 
-        # Create device selection options mapping key -> label
-        # The Air+ cloud reports an internal type ("Cobra", "Unicorn"); the model is what users know.
-        def _label(device):
-            detail = device.type
-            if self._auth_mode == AUTH_MODE_AIRPLUS_CLOUD:
-                detail = device.data.get("model") or device.type
-            return f"{device.name} ({detail})"
-
-        device_options = {
-            str(index): _label(device)
-            for index, device in enumerate(self._devices)
-        }
-
-        _LOGGER.debug("Device options for selection: %s", device_options)
-
-        return self.async_show_form(
-            step_id="select_device",
-            data_schema=vol.Schema(
-                {
-                    vol.Required("device"): vol.In(device_options),
-                }
-            ),
-        )
+        return _show_device_form()
 
     async def async_step_manual_device(
         self, user_input: Optional[Dict[str, Any]] = None
@@ -762,6 +777,13 @@ class PhilipsAirplusOptionsFlowHandler(config_entries.OptionsFlow):
                 _LOGGER.info(
                     "Options re-authentication succeeded and entry was reloaded"
                 )
+            except AuthenticationUnavailable as ex:
+                _LOGGER.warning("Philips Air+ service unreachable: %s", ex)
+                return await self._async_show_init_form(
+                    enable_mqtt,
+                    auth_code="",
+                    errors={"base": "cannot_connect"},
+                )
             except Exception as ex:
                 _LOGGER.exception("Options re-authentication failed: %s", ex)
                 return await self._async_show_init_form(
@@ -846,6 +868,9 @@ class PhilipsAirplusOptionsFlowHandler(config_entries.OptionsFlow):
                 except EmailOTPAuthError as ex:
                     _LOGGER.error("Options email OTP auth failed: %s", ex)
                     errors["base"] = "otp_verify_failed"
+                except AuthenticationUnavailable as ex:
+                    _LOGGER.warning("Philips Air+ service unreachable: %s", ex)
+                    errors["base"] = "cannot_connect"
                 except Exception as ex:
                     _LOGGER.exception("Options email OTP reauth failed: %s", ex)
                     errors["base"] = "auth_failed"
