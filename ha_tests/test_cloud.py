@@ -335,7 +335,7 @@ async def test_background_disconnect_reconnects_with_fresh_metadata(tmp_path):
 
 
 @pytest.mark.parametrize('device_type,model', [
-    ('Unicorn', 'AC3220/10'), ('Unicorn', 'AC3221/13'), ('Cobra', 'AC2221/13')])
+    ('Unicorn', 'AC3210/12'), ('Unicorn', 'AC3220/10'), ('Unicorn', 'AC3221/13'), ('Cobra', 'AC2221/13')])
 def test_model_config_accepts_known_type_model_pairs(device_type, model):
     config = model_config(model, device_type)
     assert config and config['properties']['power'] == 'D03102'
@@ -343,7 +343,7 @@ def test_model_config_accepts_known_type_model_pairs(device_type, model):
 
 
 @pytest.mark.parametrize('device_type,model', [
-    ('Cobra', 'AC3220/10'), ('Unicorn', 'AC2221/13'), ('Cobra', ''), ('Cobra', None),
+    ('Cobra', 'AC3220/10'), ('Cobra', 'AC3210/12'), ('Unicorn', 'AC2221/13'), ('Unicorn', 'AC3200/12'), ('Cobra', ''), ('Cobra', None),
     ('Other', 'AC2221/13'), ('', 'AC2221/13')])
 def test_model_config_rejects_mismatched_or_unknown_pairs(device_type, model):
     assert model_config(model, device_type) == {}
@@ -351,6 +351,7 @@ def test_model_config_rejects_mismatched_or_unknown_pairs(device_type, model):
 
 def test_device_names_are_per_model():
     assert model_config('AC3220/10', 'Unicorn')['name'] == 'Philips PureProtect 3200i (AC3220/10)'
+    assert model_config('AC3210/12', 'Unicorn')['name'] == 'Philips PureProtect 3200 Series (AC3210/12)'
     cobra = model_config('AC2221/13', 'Cobra')['name']
     assert cobra == 'Philips PureProtect Quiet 2200 Series (AC2221/13)'
 

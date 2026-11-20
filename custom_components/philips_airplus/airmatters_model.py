@@ -23,19 +23,26 @@ _UNICORN = {
 }
 
 
-# cloud type -> (accepted model prefixes, device name). Type and model must match as a pair.
+# cloud type -> {accepted model prefix: device name}. Type and model must match as a pair.
 _SUPPORTED = {
-    "Unicorn": (("AC3220/", "AC3221/"), "Philips PureProtect 3200i"),
-    "Cobra": (("AC2221/",), "Philips PureProtect Quiet 2200 Series"),
+    "Unicorn": {
+        "AC3210/": "Philips PureProtect 3200 Series",
+        "AC3220/": "Philips PureProtect 3200i",
+        "AC3221/": "Philips PureProtect 3200i",
+    },
+    "Cobra": {"AC2221/": "Philips PureProtect Quiet 2200 Series"},
 }
 
 
 def model_config(model: str, device_type: str) -> dict:
     supported = _SUPPORTED.get(device_type) if isinstance(device_type, str) else None
-    if not supported or not isinstance(model, str) or not model.startswith(supported[0]):
+    if not supported or not isinstance(model, str):
+        return {}
+    name = next((n for prefix, n in supported.items() if model.startswith(prefix)), None)
+    if name is None:
         return {}
     config = deepcopy(_UNICORN)
-    config["name"] = f"{supported[1]} ({model})"
+    config["name"] = f"{name} ({model})"
     return config
 
 
